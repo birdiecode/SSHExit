@@ -511,58 +511,63 @@ public final class MainActivity extends Activity {
     }
 
     private void showKeyManager() {
+        if (bottomNavigation != null) bottomNavigation.setSelectedItemId(2);
+        switchTab(2);
+    }
+
+    private void renderKeyList() {
+        if (keyList == null) return;
+        keyList.removeAllViews();
         List<SshKey> keys = SshKeyStore.all(this);
-        LinearLayout body = new LinearLayout(this);
-        body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(20), dp(8), dp(20), dp(4));
-
         if (keys.isEmpty()) {
-            TextView empty = text("No saved keys. Import a private key to reuse it across SSH profiles.", 14, 0xFF65728A, false);
-            body.addView(empty);
-        } else {
-            for (SshKey key : keys) {
-                LinearLayout row = new LinearLayout(this);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                TextView label = text(key.name, 15, 0xFF152033, false);
-                row.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
-                Button delete = new Button(this);
-                delete.setText("Delete");
-                delete.setOnClickListener(v -> {
-                    if (SshKeyStore.isUsed(this, key.id)) {
-                        Toast.makeText(this, "This key is used by a connection profile", Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                    new AlertDialog.Builder(this)
-                            .setTitle("Delete key?")
-                            .setMessage("The encrypted private key will be removed from the vault.")
-                            .setNegativeButton("Cancel", null)
-                            .setPositiveButton("Delete", (d, w) -> {
-                                SshKeyStore.delete(this, key.id);
-                                showKeyManager();
-                            })
-                            .show();
-                });
-                row.addView(delete);
-                body.addView(row);
-            }
+            TextView empty = text("Нет импортированных ключей. Можно подключаться по паролю.", 14, 0xFF65728A, false);
+            empty.setPadding(dp(8), dp(24), dp(8), dp(24));
+            keyList.addView(empty);
+            return;
         }
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(body);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("SSH key vault")
-                .setView(scroll)
-                .setNegativeButton("Done", null)
-                .setPositiveButton("Import private key", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            dialog.dismiss();
-            Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            picker.addCategory(Intent.CATEGORY_OPENABLE);
-            picker.setType("*/*");
-            startActivityForResult(picker, REQUEST_KEY);
-        }));
-        dialog.show();
+        for (SshKey key : keys) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            TextView label = text(key.name, 16, 0xFF152033, true);
+            row.addView(label);
+            LinearLayout actions = new LinearLayout(this);
+            actions.setOrientation(LinearLayout.HORIZONTAL);
+            Button rename = new Button(this);
+            rename.setText("Переименовать");
+            rename.setOnClickListener(v -> {
+                SshKey current = SshKeyStore.get(this, key.id);
+                if (current == null) return;
+                EditText field = input("Название ключа", current.name, InputType.TYPE_CLASS_TEXT);
+                new AlertDialog.Builder(this).setTitle("Переименовать ключ")
+                        .setView(field).setNegativeButton("Отмена", null)
+                        .setPositiveButton("Сохранить", (d, w) -> {
+                            String value = field.getText().toString().trim();
+                            if (!value.isEmpty()) {
+                                current.name = value;
+                                SshKeyStore.save(this, current);
+                                renderKeyList();
+                            }
+                        }).show();
+            });
+            Button delete = new Button(this);
+            delete.setText("Удалить");
+            delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setTitle("Удалить ключ?")
+                    .setMessage("Ключ будет удалён из общего хранилища.")
+                    .setNegativeButton("Отмена", null)
+                    .setPositiveButton("Удалить", (d, w) -> {
+                        SshKeyStore.delete(this, key.id);
+                        renderKeyList();
+                    }).show());
+            actions.addView(rename, new LinearLayout.LayoutParams(0, -2, 1f));
+            actions.addView(delete, new LinearLayout.LayoutParams(0, -2, 1f));
+            row.addView(actions);
+            keyList.addView(row);
+            View divider = new View(this);
+            divider.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorOutlineVariant, 0xFFE0E3E8));
+            keyList.addView(divider, params(-1, dp(1)));
+        }
     }
 
     private void showSaveKeyDialog() {
