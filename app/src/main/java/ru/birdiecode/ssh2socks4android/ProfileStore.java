@@ -59,7 +59,8 @@ final class ProfileStore {
 
     private static synchronized void migrateLegacyJumpSettings(Context context, List<Profile> profiles) {
         boolean changed = false;
-        for (Profile source : profiles) {
+        for (int profileIndex = 0; profileIndex < profiles.size(); profileIndex++) {
+            Profile source = profiles.get(profileIndex);
             if (source.jumpProfileId != null && !source.jumpProfileId.isEmpty()) continue;
             if (source.jumpHost == null || source.jumpHost.trim().isEmpty()) continue;
 
