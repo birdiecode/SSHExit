@@ -231,21 +231,21 @@ public final class MainActivity extends Activity {
         Profile active = ProfileStore.get(this, profileId);
 
         if ("CONNECTED".equals(status)) {
-            overallStatus.setText("Connected · SOCKS5 127.0.0.1:" + (active == null ? "" : active.localPort));
+            overallStatus.setText("Подключено · SOCKS5 127.0.0.1:" + (active == null ? "" : active.localPort));
             overallStatus.setTextColor(0xFF167447);
         } else if ("CONNECTING".equals(status)) {
-            overallStatus.setText(detail.isEmpty() ? "Connecting…" : detail);
+            overallStatus.setText("Подключение…");
             overallStatus.setTextColor(0xFF8A5A00);
         } else if ("NEEDS_TRUST".equals(status)) {
-            overallStatus.setText("Review the SSH server fingerprint");
+            overallStatus.setText("Подтвердите SSH fingerprint");
             overallStatus.setTextColor(0xFF8A5A00);
             askToTrust(profileId, detail);
         } else if ("ERROR".equals(status)) {
-            overallStatus.setText("Connection error · " + detail);
+            overallStatus.setText("Ошибка подключения");
             overallStatus.setTextColor(0xFFB42318);
         } else {
-            overallStatus.setText("No active tunnel");
-            overallStatus.setTextColor(0xFF33415C);
+            overallStatus.setText("Отключено");
+            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
         }
 
         for (String id : rowStatuses.keySet()) {
@@ -253,12 +253,27 @@ public final class MainActivity extends Activity {
             Button action = rowActions.get(id);
             if (row == null || action == null) continue;
             if (!id.equals(profileId)) {
-                row.setText("Ready");
-                action.setText("Connect");
+                row.setText("Отключено");
+                action.setText("Подключить");
             } else {
-                row.setText(detail.isEmpty() ? status : detail);
+                if ("ERROR".equals(status)) row.setText("Ошибка · нажмите для подробностей");
+                else if ("CONNECTED".equals(status)) row.setText("Подключено · " + detail);
+                else if ("CONNECTING".equals(status)) row.setText("Подключение…");
+                else if ("NEEDS_TRUST".equals(status)) row.setText("Ожидает подтверждения fingerprint");
+                else row.setText("Отключено");
+                row.setOnClickListener(v -> {
+                    if ("ERROR".equals(ProfileStore.status(this))
+                            && id.equals(ProfileStore.statusProfile(this))) {
+                        new AlertDialog.Builder(this).setTitle("Ошибка подключения")
+                                .setMessage(ProfileStore.statusDetail(this))
+                                .setPositiveButton("Закрыть", null).setNeutralButton("Подробности", (d, w) ->
+                                        new AlertDialog.Builder(this).setTitle("Техническая информация")
+                                                .setMessage(ProfileStore.statusDetail(this))
+                                                .setPositiveButton("Закрыть", null).show()).show();
+                    }
+                });
                 boolean running = "CONNECTED".equals(status) || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status);
-                action.setText(running ? "Stop" : "Connect");
+                action.setText(running ? "Отключить" : "Подключить");
             }
         }
     }
@@ -671,7 +686,13 @@ public final class MainActivity extends Activity {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(sizeSp);
-        view.setTextColor(color);
+        int finalColor = color;
+        if (color == 0xFF65728A) {
+            finalColor = resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, color);
+        } else if (color == 0xFF152033 || color == 0xFF33415C) {
+            finalColor = resolveColor(com.google.android.material.R.attr.colorOnSurface, color);
+        }
+        view.setTextColor(finalColor);
         if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         return view;
     }
