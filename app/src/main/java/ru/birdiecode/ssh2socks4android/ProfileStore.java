@@ -20,7 +20,8 @@ final class ProfileStore {
     static synchronized List<Profile> all(Context context) {
         ArrayList<Profile> profiles = new ArrayList<>();
         try {
-            JSONArray array = prefs(context).getJSONArray(PROFILES);
+            String encoded = prefs(context).getString(PROFILES, "[]");
+            JSONArray array = new JSONArray(encoded);
             if (array == null) return profiles;
             for (int i = 0; i < array.length(); i++) {
                 JSONObject json = array.optJSONObject(i);
