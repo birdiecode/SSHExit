@@ -27,7 +27,7 @@ final class PinnedHostKeyRepository implements HostKeyRepository {
             offeredFingerprint = "SHA256:" + Base64.encodeToString(digest, Base64.NO_PADDING | Base64.NO_WRAP);
         } catch (Exception e) {
             offeredFingerprint = "";
-            return NOT_VERIFIABLE;
+            return NOT_INCLUDED;
         }
         if (pinnedFingerprint.isEmpty()) return NOT_INCLUDED;
         return pinnedFingerprint.equals(offeredFingerprint) ? OK : CHANGED;
