@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -175,7 +176,7 @@ public final class MainActivity extends Activity {
         for (Profile profile : profiles) {
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setBackgroundColor(0xFFFFFFFF);
+            card.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFFFFFFF));
             card.setPadding(dp(16), dp(14), dp(16), dp(12));
             LinearLayout.LayoutParams cardParams = params(-1, -2);
             cardParams.bottomMargin = dp(10);
@@ -183,8 +184,9 @@ public final class MainActivity extends Activity {
 
             TextView name = text(profile.name.isEmpty() ? profile.host : profile.name, 18, 0xFF152033, true);
             card.addView(name);
-            String route = profile.jumpHost == null || profile.jumpHost.trim().isEmpty()
-                    ? "" : "  ·  via " + profile.jumpHost + ":" + profile.jumpPort;
+            Profile jump = profile.jumpProfileId == null || profile.jumpProfileId.isEmpty()
+                    ? null : ProfileStore.get(this, profile.jumpProfileId);
+            String route = jump == null ? "" : "  ·  через " + jump.name;
             TextView endpoint = text(profile.username + "@" + profile.host + ":" + profile.sshPort
                     + route + "  ·  SOCKS5 : " + profile.localPort, 13, 0xFF65728A, false);
             LinearLayout.LayoutParams endpointParams = params(-1, -2);
@@ -616,6 +618,7 @@ public final class MainActivity extends Activity {
     private Profile copy(Profile source) {
         Profile p = new Profile(source.name, source.host, source.sshPort, source.username, source.localPort);
         p.id = source.id;
+        p.jumpProfileId = source.jumpProfileId;
         p.keyId = source.keyId;
         p.encryptedKey = source.encryptedKey;
         p.encryptedPassphrase = source.encryptedPassphrase;
@@ -657,6 +660,11 @@ public final class MainActivity extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, "Could not read key: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private int resolveColor(int attribute, int fallback) {
+        TypedValue value = new TypedValue();
+        return getTheme().resolveAttribute(attribute, value, true) ? value.data : fallback;
     }
 
     private TextView text(String value, int sizeSp, int color, boolean bold) {
