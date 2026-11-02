@@ -77,10 +77,16 @@ final class ProfileStore {
             if (jump == null) {
                 jump = new Profile("Jump · " + source.jumpHost, source.jumpHost, source.jumpPort,
                         source.jumpUsername == null ? "" : source.jumpUsername, 1081);
-                jump.encryptedPassword = source.encryptedJumpPassword == null ? "" : source.encryptedJumpPassword;
-                jump.hostFingerprint = source.jumpFingerprint == null ? "" : source.jumpFingerprint;
-                jump.jumpKeyId = source.jumpKeyId == null ? "" : source.jumpKeyId;
                 profiles.add(jump);
+            }
+            // Preserve credentials and pins stored inline on the old target profile.
+            if ((jump.encryptedPassword == null || jump.encryptedPassword.isEmpty())
+                    && source.encryptedJumpPassword != null && !source.encryptedJumpPassword.isEmpty()) {
+                jump.encryptedPassword = source.encryptedJumpPassword;
+            }
+            if ((jump.hostFingerprint == null || jump.hostFingerprint.isEmpty())
+                    && source.jumpFingerprint != null && !source.jumpFingerprint.isEmpty()) {
+                jump.hostFingerprint = source.jumpFingerprint;
             }
             source.jumpProfileId = jump.id;
             source.jumpHost = "";
