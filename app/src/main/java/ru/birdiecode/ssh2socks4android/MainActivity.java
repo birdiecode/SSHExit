@@ -43,6 +43,8 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, TextView> rowStatuses = new HashMap<>();
     private final Map<String, Button> rowActions = new HashMap<>();
+    private final Map<String, TextView> rowFingerprints = new HashMap<>();
+    private final Map<String, Button> rowFingerprintResets = new HashMap<>();
 
     private LinearLayout list;
     private LinearLayout keyList;
@@ -164,6 +166,8 @@ public final class MainActivity extends Activity {
         list.removeAllViews();
         rowStatuses.clear();
         rowActions.clear();
+        rowFingerprints.clear();
+        rowFingerprintResets.clear();
 
         List<Profile> profiles = ProfileStore.all(this);
         if (profiles.isEmpty()) {
@@ -194,6 +198,14 @@ public final class MainActivity extends Activity {
             endpointParams.topMargin = dp(4);
             card.addView(endpoint, endpointParams);
 
+            TextView fingerprint = text("", 12, 0xFF65728A, false);
+            fingerprint.setTextIsSelectable(true);
+            LinearLayout.LayoutParams fingerprintParams = params(-1, -2);
+            fingerprintParams.topMargin = dp(6);
+            card.addView(fingerprint, fingerprintParams);
+            rowFingerprints.put(profile.id, fingerprint);
+            updateFingerprintStatus(fingerprint, profile);
+
             TextView state = text("", 13, 0xFF33415C, false);
             LinearLayout.LayoutParams stateParams = params(-1, -2);
             stateParams.topMargin = dp(9);
@@ -220,6 +232,14 @@ public final class MainActivity extends Activity {
             delete.setText("Delete");
             delete.setOnClickListener(v -> confirmDelete(profile));
             buttons.addView(delete, new LinearLayout.LayoutParams(0, -2, 1f));
+
+            Button resetFingerprint = new Button(this);
+            resetFingerprint.setText("Удалить fingerprint");
+            resetFingerprint.setOnClickListener(v -> confirmFingerprintReset(profile));
+            card.addView(resetFingerprint, params(-1, -2));
+            resetFingerprint.setVisibility(profile.hostFingerprint == null || profile.hostFingerprint.isEmpty()
+                    ? View.GONE : View.VISIBLE);
+            rowFingerprintResets.put(profile.id, resetFingerprint);
         }
         refreshStatuses();
     }
@@ -256,6 +276,14 @@ public final class MainActivity extends Activity {
         for (String id : rowStatuses.keySet()) {
             TextView row = rowStatuses.get(id);
             Button action = rowActions.get(id);
+            Profile rowProfile = ProfileStore.get(this, id);
+            TextView fingerprint = rowFingerprints.get(id);
+            if (rowProfile != null && fingerprint != null) updateFingerprintStatus(fingerprint, rowProfile);
+            Button resetFingerprint = rowFingerprintResets.get(id);
+            if (resetFingerprint != null && rowProfile != null) {
+                resetFingerprint.setVisibility(rowProfile.hostFingerprint == null || rowProfile.hostFingerprint.isEmpty()
+                        ? View.GONE : View.VISIBLE);
+            }
             if (row == null || action == null) continue;
             if (!id.equals(profileId)) {
                 row.setText("Отключено");
@@ -399,6 +427,46 @@ public final class MainActivity extends Activity {
                         startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     }
                     ProfileStore.delete(this, profile.id);
+                    renderProfiles();
+                })
+                .show();
+    }
+
+    private void updateFingerprintStatus(TextView view, Profile profile) {
+        String trusted = profile.hostFingerprint == null ? "" : profile.hostFingerprint;
+        String observed = profile.observedFingerprint == null ? "" : profile.observedFingerprint;
+        if (!observed.isEmpty()) {
+            view.setText("Проверка fingerprint не пройдена\\nДоверенный: " + trusted + "\\nПолучен: " + observed);
+            view.setTextColor(resolveColor(com.google.android.material.R.attr.colorError, 0xFFB42318));
+            return;
+        }
+        if (!trusted.isEmpty()) {
+            view.setText("Доверенный fingerprint\\n" + trusted);
+            view.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
+            return;
+        }
+        String pending = ProfileStore.statusDetail(this);
+        String nodePrefix = "NODE:" + profile.id + ":";
+        if ("NEEDS_TRUST".equals(ProfileStore.status(this)) && pending != null && pending.startsWith(nodePrefix)) {
+            view.setText("Fingerprint ожидает подтверждения\\n" + pending.substring(nodePrefix.length()));
+            view.setTextColor(resolveColor(com.google.android.material.R.attr.colorPrimary, 0xFF2457D6));
+        } else {
+            view.setText("Доверенный fingerprint не задан");
+            view.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
+        }
+    }
+
+    private void confirmFingerprintReset(Profile profile) {
+        new AlertDialog.Builder(this)
+                .setTitle("Удалить доверенный fingerprint?")
+                .setMessage("При следующем подключении нужно будет сверить fingerprint сервера и подтвердить его заново.")
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Удалить", (dialog, which) -> {
+                    Profile stored = ProfileStore.get(this, profile.id);
+                    if (stored == null) return;
+                    stored.hostFingerprint = "";
+                    stored.observedFingerprint = "";
+                    ProfileStore.save(this, stored);
                     renderProfiles();
                 })
                 .show();
