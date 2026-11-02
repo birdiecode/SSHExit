@@ -115,7 +115,7 @@ public final class SshTunnelService extends Service {
         try {
             if (useJump) {
                 JSch jumpJsch = new JSch();
-                if (jumpKey != null) addVaultKey(jumpJsch, jumpKey);
+                addAllVaultKeys(jumpJsch);
                 Session jumpSession = jumpJsch.getSession(
                         profile.jumpUsername, profile.jumpHost, profile.jumpPort);
                 jumpCandidate = jumpSession;
@@ -138,11 +138,7 @@ public final class SshTunnelService extends Service {
             }
 
             JSch targetJsch = new JSch();
-            if (targetKey != null) {
-                addVaultKey(targetJsch, targetKey);
-            } else if (legacyTargetKey) {
-                addLegacyKey(targetJsch, profile);
-            }
+            addAllVaultKeys(targetJsch);
             Session targetSession = targetJsch.getSession(profile.username, profile.host, profile.sshPort);
             targetCandidate = targetSession;
             if (hasTargetPassword) targetSession.setPassword(KeyVault.decrypt(profile.encryptedPassword));
@@ -185,11 +181,13 @@ public final class SshTunnelService extends Service {
         }
     }
 
-    private void addVaultKey(JSch jsch, SshKey key) throws Exception {
-        byte[] privateKey = KeyVault.decrypt(key.encryptedPrivateKey);
-        byte[] passphrase = key.encryptedPassphrase == null || key.encryptedPassphrase.isEmpty()
-                ? null : KeyVault.decrypt(key.encryptedPassphrase);
-        jsch.addIdentity("vault-" + key.id, privateKey, null, passphrase);
+    private void addAllVaultKeys(JSch jsch) throws Exception {
+        for (SshKey key : SshKeyStore.all(this)) {
+            byte[] privateKey = KeyVault.decrypt(key.encryptedPrivateKey);
+            byte[] passphrase = key.encryptedPassphrase == null || key.encryptedPassphrase.isEmpty()
+                    ? null : KeyVault.decrypt(key.encryptedPassphrase);
+            jsch.addIdentity("vault-" + key.id, privateKey, null, passphrase);
+        }
     }
 
     private void addLegacyKey(JSch jsch, Profile profile) throws Exception {
