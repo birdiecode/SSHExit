@@ -74,8 +74,10 @@ public final class SshTunnelService extends Service {
             fail(profileId, "Connection profile was not found");
             return;
         }
-        if (profile.encryptedKey == null || profile.encryptedKey.isEmpty()) {
-            fail(profileId, "Import an SSH private key first");
+        boolean hasKey = profile.encryptedKey != null && !profile.encryptedKey.isEmpty();
+        boolean hasPassword = profile.encryptedPassword != null && !profile.encryptedPassword.isEmpty();
+        if (!hasKey && !hasPassword) {
+            fail(profileId, "Add an SSH password or private key to this profile");
             return;
         }
 
@@ -85,15 +87,17 @@ public final class SshTunnelService extends Service {
 
         Session candidate = null;
         try {
-            byte[] privateKey = KeyVault.decrypt(profile.encryptedKey);
+            byte[] privateKey = hasKey ? KeyVault.decrypt(profile.encryptedKey) : null;
             byte[] passphrase = profile.encryptedPassphrase == null || profile.encryptedPassphrase.isEmpty()
                     ? null : KeyVault.decrypt(profile.encryptedPassphrase);
+            byte[] password = hasPassword ? KeyVault.decrypt(profile.encryptedPassword) : null;
 
             JSch jsch = new JSch();
-            jsch.addIdentity("profile-" + profile.id, privateKey, null, passphrase);
+            if (privateKey != null) jsch.addIdentity("profile-" + profile.id, privateKey, null, passphrase);
             Session session = jsch.getSession(profile.username, profile.host, profile.sshPort);
             candidate = session;
-            session.setConfig("PreferredAuthentications", "publickey");
+            if (password != null) session.setPassword(password);
+            session.setConfig("PreferredAuthentications", "publickey,password");
             // The key is inspected below before any tunnel channel is created. It is pinned only
             // after the user confirms the displayed fingerprint, and compared on every reconnect.
             session.setConfig("StrictHostKeyChecking", "no");
