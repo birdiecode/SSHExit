@@ -380,11 +380,20 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmDelete(Profile profile) {
+        List<Profile> dependents = ProfileStore.dependents(this, profile.id);
+        StringBuilder message = new StringBuilder("Зашифрованные данные и профиль будут удалены.");
+        if (!dependents.isEmpty()) {
+            message.append("\n\nЭтот узел используется в маршрутах:");
+            for (Profile dependent : dependents) {
+                message.append("\n• ").append(dependent.name);
+            }
+            message.append("\n\nУ этих профилей маршрут будет переключён на прямое подключение.");
+        }
         new AlertDialog.Builder(this)
-                .setTitle("Delete " + profile.name + "?")
-                .setMessage("The saved encrypted credentials and profile will be removed.")
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Delete", (dialog, which) -> {
+                .setTitle("Удалить «" + profile.name + "»?")
+                .setMessage(message.toString())
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Удалить", (dialog, which) -> {
                     if (profile.id.equals(ProfileStore.statusProfile(this))) {
                         startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     }
