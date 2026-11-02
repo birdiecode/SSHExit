@@ -16,6 +16,7 @@ final class ProfileStore {
     private static final String STATUS_PROFILE = "service_profile";
     private static final String STATUS_DETAIL = "service_detail";
     private static final String PENDING_FINGERPRINT = "pending_fingerprint";
+    private static final String GRAPH_MIGRATED = "graph_migrated_v1";
 
     static synchronized List<Profile> all(Context context) {
         ArrayList<Profile> profiles = new ArrayList<>();
@@ -50,7 +51,51 @@ final class ProfileStore {
         } catch (Exception ignored) {
             // A malformed preference should not crash the app; the user can recreate the profile.
         }
+        if (!prefs(context).getBoolean(GRAPH_MIGRATED, false)) {
+            migrateLegacyJumpSettings(context, profiles);
+        }
         return profiles;
+    }
+
+    private static synchronized void migrateLegacyJumpSettings(Context context, List<Profile> profiles) {
+        boolean changed = false;
+        for (Profile source : profiles) {
+            if (source.jumpProfileId != null && !source.jumpProfileId.isEmpty()) continue;
+            if (source.jumpHost == null || source.jumpHost.trim().isEmpty()) continue;
+
+            Profile jump = null;
+            for (Profile candidate : profiles) {
+                if (!candidate.id.equals(source.id)
+                        && candidate.host.equalsIgnoreCase(source.jumpHost)
+                        && candidate.sshPort == source.jumpPort
+                        && candidate.username.equals(source.jumpUsername)) {
+                    jump = candidate;
+                    break;
+                }
+            }
+            if (jump == null) {
+                jump = new Profile("Jump · " + source.jumpHost, source.jumpHost, source.jumpPort,
+                        source.jumpUsername == null ? "" : source.jumpUsername, 1081);
+                jump.encryptedPassword = source.encryptedJumpPassword == null ? "" : source.encryptedJumpPassword;
+                jump.hostFingerprint = source.jumpFingerprint == null ? "" : source.jumpFingerprint;
+                jump.jumpKeyId = source.jumpKeyId == null ? "" : source.jumpKeyId;
+                profiles.add(jump);
+            }
+            source.jumpProfileId = jump.id;
+            source.jumpHost = "";
+            source.jumpUsername = "";
+            source.encryptedJumpPassword = "";
+            source.jumpKeyId = "";
+            source.jumpFingerprint = "";
+            changed = true;
+        }
+        SharedPreferences.Editor editor = prefs(context).edit().putBoolean(GRAPH_MIGRATED, true);
+        if (changed) {
+            JSONArray array = new JSONArray();
+            for (Profile profile : profiles) array.put(toJson(profile));
+            editor.putString(PROFILES, array.toString());
+        }
+        editor.apply();
     }
 
     static synchronized Profile get(Context context, String id) {
