@@ -121,7 +121,7 @@ public final class MainActivity extends Activity {
 
         List<Profile> profiles = ProfileStore.all(this);
         if (profiles.isEmpty()) {
-            TextView empty = text("No connections yet. Add a profile and import an SSH private key.", 14, 0xFF65728A, false);
+            TextView empty = text("No connections yet. Add an SSH profile and choose password or key authentication.", 14, 0xFF65728A, false);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(16), dp(32), dp(16), dp(32));
             list.addView(empty);
@@ -262,7 +262,7 @@ public final class MainActivity extends Activity {
     private void confirmDelete(Profile profile) {
         new AlertDialog.Builder(this)
                 .setTitle("Delete " + profile.name + "?")
-                .setMessage("The saved encrypted key and profile will be removed.")
+                .setMessage("The saved encrypted credentials and profile will be removed.")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Delete", (dialog, which) -> {
                     if (profile.id.equals(ProfileStore.statusProfile(this))) {
@@ -290,6 +290,7 @@ public final class MainActivity extends Activity {
         EditText sshPort = input("SSH port", String.valueOf(profile.sshPort), InputType.TYPE_CLASS_NUMBER);
         EditText username = input("Username", profile.username, InputType.TYPE_CLASS_TEXT);
         EditText localPort = input("Local SOCKS5 port", String.valueOf(profile.localPort), InputType.TYPE_CLASS_NUMBER);
+        EditText sshPassword = input("SSH password (blank keeps saved value)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         EditText passphrase = input("Private key passphrase (blank keeps saved value)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
 
         form.addView(name);
@@ -297,6 +298,7 @@ public final class MainActivity extends Activity {
         form.addView(sshPort);
         form.addView(username);
         form.addView(localPort);
+        form.addView(sshPassword);
         form.addView(passphrase);
 
         TextView keyLabel = text(existing == null || existing.encryptedKey.isEmpty()
@@ -342,15 +344,21 @@ public final class MainActivity extends Activity {
                 profile.localPort = localPortValue;
 
                 String pass = passphrase.getText().toString();
+                String password = sshPassword.getText().toString();
                 if (pendingKey != null) {
                     profile.encryptedKey = KeyVault.encrypt(pendingKey);
                     profile.encryptedPassphrase = pass.isEmpty() ? "" : KeyVault.encrypt(pass.getBytes(StandardCharsets.UTF_8));
                 } else if (!pass.isEmpty()) {
                     profile.encryptedPassphrase = KeyVault.encrypt(pass.getBytes(StandardCharsets.UTF_8));
                 }
+                if (!password.isEmpty()) {
+                    profile.encryptedPassword = KeyVault.encrypt(password.getBytes(StandardCharsets.UTF_8));
+                }
 
-                if (profile.encryptedKey == null || profile.encryptedKey.isEmpty()) {
-                    throw new IllegalArgumentException("Choose an SSH private key");
+                boolean hasKey = profile.encryptedKey != null && !profile.encryptedKey.isEmpty();
+                boolean hasPassword = profile.encryptedPassword != null && !profile.encryptedPassword.isEmpty();
+                if (!hasKey && !hasPassword) {
+                    throw new IllegalArgumentException("Choose a private key or enter an SSH password");
                 }
                 ProfileStore.save(this, profile);
                 pendingKey = null;
@@ -368,6 +376,7 @@ public final class MainActivity extends Activity {
         p.id = source.id;
         p.encryptedKey = source.encryptedKey;
         p.encryptedPassphrase = source.encryptedPassphrase;
+        p.encryptedPassword = source.encryptedPassword;
         p.hostFingerprint = source.hostFingerprint;
         return p;
     }
