@@ -278,7 +278,8 @@ public final class MainActivity extends Activity {
                                                 .setPositiveButton("Закрыть", null).show()).show();
                     }
                 });
-                boolean running = "CONNECTED".equals(status) || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status);
+                boolean running = "CONNECTED".equals(status) || "CONNECTING".equals(status)
+                        || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status);
                 action.setText(running ? "Отключить" : "Подключить");
             }
         }
