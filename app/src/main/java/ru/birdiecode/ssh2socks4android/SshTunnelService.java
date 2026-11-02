@@ -9,11 +9,12 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Base64;
 
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 
-import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -95,7 +96,7 @@ public final class SshTunnelService extends Service {
             session.setConfig("StrictHostKeyChecking", "no");
             session.connect(20_000);
 
-            String fingerprint = session.getHostKey().getFingerPrint(jsch);
+            String fingerprint = sha256Fingerprint(session.getHostKey().getKey());
             if (profile.hostFingerprint == null || profile.hostFingerprint.isEmpty()) {
                 session.disconnect();
                 ProfileStore.setPendingFingerprint(this, fingerprint);
@@ -144,6 +145,11 @@ public final class SshTunnelService extends Service {
         updateNotification("SSH tunnel stopped", message);
         stopForeground(true);
         stopSelf();
+    }
+
+    private String sha256Fingerprint(byte[] hostKey) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(hostKey);
+        return "SHA256:" + Base64.encodeToString(digest, Base64.NO_PADDING | Base64.NO_WRAP);
     }
 
     private String readableMessage(Exception e) {
