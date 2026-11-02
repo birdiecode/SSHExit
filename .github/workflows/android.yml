@@ -44,33 +44,3 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Capture main screens on Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          arch: x86_64
-          profile: pixel_2
-          disable-animations: true
-          script: |
-            adb install app/build/outputs/apk/debug/app-debug.apk
-            adb shell pm grant ru.birdiecode.ssh2socks4android android.permission.POST_NOTIFICATIONS || true
-            adb shell am start -W -n ru.birdiecode.ssh2socks4android/.MainActivity
-            sleep 2
-            mkdir -p screenshots
-            adb exec-out screencap -p > screenshots/hosts.png
-            adb shell uiautomator dump /sdcard/window.xml >/dev/null
-            adb pull /sdcard/window.xml /tmp/window.xml >/dev/null
-            read KEY_X KEY_Y <<EOF
-            $(python3 -c 'import xml.etree.ElementTree as E; r=E.parse("/tmp/window.xml").getroot(); n=next(x for x in r.iter("node") if x.attrib.get("text")=="Ключи"); b=n.attrib["bounds"]; p=b.replace("][",",").strip("[]").split(","); print((int(p[0])+int(p[2]))//2,(int(p[1])+int(p[3]))//2)')
-            EOF
-            adb shell input tap "$KEY_X" "$KEY_Y"
-            sleep 1
-            adb exec-out screencap -p > screenshots/keys.png
-
-      - name: Upload screen captures
-        uses: actions/upload-artifact@v4
-        with:
-          name: ssh2socks-screenshots
-          path: screenshots/*.png
-          if-no-files-found: error
-          retention-days: 14
