@@ -29,6 +29,7 @@ public final class SshTunnelService extends Service {
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private volatile Session activeSession;
+    private volatile Socks5Proxy activeProxy;
     private volatile String activeProfileId = "";
 
     @Override
@@ -82,6 +83,7 @@ public final class SshTunnelService extends Service {
         ProfileStore.setStatus(this, profile.id, "CONNECTING", "Connecting to " + profile.host);
         updateNotification("Connecting", profile.username + "@" + profile.host);
 
+        Session candidate = null;
         try {
             byte[] privateKey = KeyVault.decrypt(profile.encryptedKey);
             byte[] passphrase = profile.encryptedPassphrase == null || profile.encryptedPassphrase.isEmpty()
@@ -90,13 +92,14 @@ public final class SshTunnelService extends Service {
             JSch jsch = new JSch();
             jsch.addIdentity("profile-" + profile.id, privateKey, null, passphrase);
             Session session = jsch.getSession(profile.username, profile.host, profile.sshPort);
+            candidate = session;
             session.setConfig("PreferredAuthentications", "publickey");
             // The key is inspected below before any tunnel channel is created. It is pinned only
             // after the user confirms the displayed fingerprint, and compared on every reconnect.
             session.setConfig("StrictHostKeyChecking", "no");
             session.connect(20_000);
 
-            String fingerprint = sha256Fingerprint(session.getHostKey().getKey());
+            String fingerprint = sha256Fingerprint(Base64.decode(session.getHostKey().getKey(), Base64.DEFAULT));
             if (profile.hostFingerprint == null || profile.hostFingerprint.isEmpty()) {
                 session.disconnect();
                 ProfileStore.setPendingFingerprint(this, fingerprint);
@@ -112,13 +115,18 @@ public final class SshTunnelService extends Service {
                 return;
             }
 
-            session.setPortForwardingD(profile.localPort);
+            Socks5Proxy proxy = new Socks5Proxy(session, profile.localPort);
+            proxy.start();
             activeSession = session;
+            activeProxy = proxy;
             ProfileStore.setStatus(this, profile.id, "CONNECTED",
                     "SOCKS5 listening on 127.0.0.1:" + profile.localPort);
             updateNotification("SSH tunnel connected",
                     "SOCKS5 127.0.0.1:" + profile.localPort + " via " + profile.host);
         } catch (Exception e) {
+            if (candidate != null) {
+                try { candidate.disconnect(); } catch (Exception ignored) {}
+            }
             fail(profile.id, readableMessage(e));
         }
     }
@@ -132,6 +140,9 @@ public final class SshTunnelService extends Service {
     }
 
     private void closeActiveSession() {
+        Socks5Proxy proxy = activeProxy;
+        activeProxy = null;
+        if (proxy != null) proxy.stop();
         Session session = activeSession;
         activeSession = null;
         if (session != null) {
