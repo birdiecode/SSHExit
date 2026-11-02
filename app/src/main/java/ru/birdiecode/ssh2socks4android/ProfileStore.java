@@ -39,6 +39,7 @@ final class ProfileStore {
                 p.encryptedPassword = json.optString("encryptedPassword");
                 p.encryptedPassphrase = json.optString("encryptedPassphrase");
                 p.hostFingerprint = json.optString("hostFingerprint");
+                p.observedFingerprint = json.optString("observedFingerprint");
                 p.jumpProfileId = json.optString("jumpProfileId");
                 p.jumpHost = json.optString("jumpHost");
                 p.jumpPort = json.optInt("jumpPort", 22);
@@ -185,6 +186,7 @@ final class ProfileStore {
             json.put("encryptedPassword", p.encryptedPassword);
             json.put("encryptedPassphrase", p.encryptedPassphrase);
             json.put("hostFingerprint", p.hostFingerprint);
+            json.put("observedFingerprint", p.observedFingerprint);
             json.put("jumpProfileId", p.jumpProfileId);
             json.put("jumpHost", p.jumpHost);
             json.put("jumpPort", p.jumpPort);
