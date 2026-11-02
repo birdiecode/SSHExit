@@ -6,6 +6,9 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
+import android.content.res.Configuration;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -17,7 +20,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -27,6 +29,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.card.MaterialCardView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -42,9 +46,9 @@ public final class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, TextView> rowStatuses = new HashMap<>();
-    private final Map<String, Button> rowActions = new HashMap<>();
+    private final Map<String, MaterialButton> rowActions = new HashMap<>();
     private final Map<String, TextView> rowFingerprints = new HashMap<>();
-    private final Map<String, Button> rowFingerprintResets = new HashMap<>();
+    private final Map<String, MaterialButton> rowFingerprintResets = new HashMap<>();
 
     private LinearLayout list;
     private LinearLayout keyList;
@@ -73,58 +77,78 @@ public final class MainActivity extends Activity {
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(16), dp(16), dp(16), 0);
+        page.setPadding(dp(20), dp(12), dp(20), 0);
+        page.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
 
-        TextView title = text("SSH2SOCKS", 26, 0xFF152033, true);
+        TextView title = text("SSH2SOCKS", 23, 0xFF152033, true);
         page.addView(title);
-        TextView subtitle = text("SSH-туннели и локальный SOCKS5", 14, 0xFF65728A, false);
-        page.addView(subtitle);
+        TextView subtitle = text("SSH-туннели · локальный SOCKS5", 14, 0xFF65728A, false);
+        LinearLayout.LayoutParams subtitleParams = params(-1, -2);
+        subtitleParams.topMargin = dp(2);
+        page.addView(subtitle, subtitleParams);
 
         overallStatus = text("Отключено", 14, 0xFF33415C, true);
-        LinearLayout.LayoutParams statusParams = params(-1, -2);
-        statusParams.topMargin = dp(12);
-        page.addView(overallStatus, statusParams);
+        overallStatus.setPadding(dp(14), dp(12), dp(14), dp(12));
+        MaterialCardView statusCard = surfaceCard();
+        statusCard.setCardElevation(0);
+        statusCard.setStrokeWidth(0);
+        LinearLayout.LayoutParams statusCardParams = params(-1, -2);
+        statusCardParams.topMargin = dp(14);
+        page.addView(statusCard, statusCardParams);
+        statusCard.addView(overallStatus);
 
         contentHost = new FrameLayout(this);
         LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, 0, 1f);
-        contentParams.topMargin = dp(8);
+        contentParams.topMargin = dp(12);
         page.addView(contentHost, contentParams);
 
         LinearLayout hostsPage = new LinearLayout(this);
         hostsPage.setOrientation(LinearLayout.VERTICAL);
-        Button add = new Button(this);
-        add.setText("Добавить хост");
+        MaterialButton add = makeButton("Добавить хост", true);
+        LinearLayout.LayoutParams addParams = params(-1, -2);
+        addParams.bottomMargin = dp(10);
+        hostsPage.addView(add, addParams);
         add.setOnClickListener(v -> showEditor(null));
-        hostsPage.addView(add);
+
         ScrollView hostsScroll = new ScrollView(this);
+        hostsScroll.setClipToPadding(false);
+        hostsScroll.setFillViewport(false);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(0, dp(2), 0, dp(12));
         hostsScroll.addView(list);
         hostsPage.addView(hostsScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
-        TextView help = text("SOCKS5 доступен на этом устройстве: 127.0.0.1:<порт>", 12, 0xFF65728A, false);
-        hostsPage.addView(help);
+        TextView help = text("Прокси доступен на устройстве по адресу 127.0.0.1:<порт>", 12, 0xFF65728A, false);
+        LinearLayout.LayoutParams helpParams = params(-1, -2);
+        helpParams.topMargin = dp(4);
+        helpParams.bottomMargin = dp(6);
+        hostsPage.addView(help, helpParams);
         contentHost.addView(hostsPage);
 
         LinearLayout keysPage = new LinearLayout(this);
         keysPage.setOrientation(LinearLayout.VERTICAL);
-        TextView keyHint = text("Общее хранилище SSH-ключей. Ключи предлагаются каждому узлу цепочки.", 13, 0xFF65728A, false);
+        TextView keyHint = text("Общее хранилище SSH-ключей. Ключи проверяются для каждого узла цепочки.",
+                13, 0xFF65728A, false);
+        keyHint.setPadding(dp(2), dp(2), dp(2), dp(12));
         keysPage.addView(keyHint);
-        Button importKey = new Button(this);
-        importKey.setText("Импортировать приватный ключ");
+        MaterialButton importKey = makeButton("Импортировать приватный ключ", true);
+        keysPage.addView(importKey, params(-1, -2));
         importKey.setOnClickListener(v -> launchKeyPicker());
-        keysPage.addView(importKey);
         ScrollView keysScroll = new ScrollView(this);
+        keysScroll.setClipToPadding(false);
         keyList = new LinearLayout(this);
         keyList.setOrientation(LinearLayout.VERTICAL);
+        keyList.setPadding(0, dp(12), 0, dp(12));
         keysScroll.addView(keyList);
         keysPage.addView(keysScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
         contentHost.addView(keysPage);
         keysPage.setVisibility(View.GONE);
 
         bottomNavigation = new BottomNavigationView(this);
-        bottomNavigation.getMenu().add(0, 1, 0, "Хосты").setIcon(android.R.drawable.ic_menu_agenda);
-        bottomNavigation.getMenu().add(0, 2, 1, "Ключи").setIcon(android.R.drawable.ic_lock_lock);
+        bottomNavigation.getMenu().add(0, 1, 0, "Хосты").setIcon(R.drawable.ic_hosts);
+        bottomNavigation.getMenu().add(0, 2, 1, "Ключи").setIcon(R.drawable.ic_keys);
         bottomNavigation.setLabelVisibilityMode(BottomNavigationView.LABEL_VISIBILITY_LABELED);
+        bottomNavigation.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
         bottomNavigation.setOnItemSelectedListener(item -> {
             switchTab(item.getItemId());
             return true;
@@ -171,79 +195,123 @@ public final class MainActivity extends Activity {
 
         List<Profile> profiles = ProfileStore.all(this);
         if (profiles.isEmpty()) {
-            TextView empty = text("No connections yet. Add an SSH profile and choose password or key authentication.", 14, 0xFF65728A, false);
+            MaterialCardView emptyCard = surfaceCard();
+            LinearLayout emptyContent = new LinearLayout(this);
+            emptyContent.setOrientation(LinearLayout.VERTICAL);
+            emptyContent.setGravity(Gravity.CENTER);
+            emptyContent.setPadding(dp(20), dp(28), dp(20), dp(28));
+            TextView emptyTitle = text("Пока нет хостов", 18, 0xFF152033, true);
+            emptyTitle.setGravity(Gravity.CENTER);
+            emptyContent.addView(emptyTitle);
+            TextView empty = text("Добавьте SSH-сервер и выберите подключение напрямую или через ProxyJump.",
+                    14, 0xFF65728A, false);
             empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(16), dp(32), dp(16), dp(32));
-            list.addView(empty);
+            LinearLayout.LayoutParams emptyParams = params(-1, -2);
+            emptyParams.topMargin = dp(8);
+            emptyContent.addView(empty, emptyParams);
+            emptyCard.addView(emptyContent);
+            list.addView(emptyCard, params(-1, -2));
             return;
         }
 
         for (Profile profile : profiles) {
-            LinearLayout card = new LinearLayout(this);
-            card.setOrientation(LinearLayout.VERTICAL);
-            card.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFFFFFFF));
-            card.setPadding(dp(16), dp(14), dp(16), dp(12));
+            MaterialCardView card = surfaceCard();
+            card.setContentPadding(dp(16), dp(14), dp(16), dp(14));
             LinearLayout.LayoutParams cardParams = params(-1, -2);
-            cardParams.bottomMargin = dp(10);
+            cardParams.bottomMargin = dp(12);
             list.addView(card, cardParams);
 
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            card.addView(content);
+
+            LinearLayout titleRow = new LinearLayout(this);
+            titleRow.setGravity(Gravity.CENTER_VERTICAL);
+            content.addView(titleRow);
             TextView name = text(profile.name.isEmpty() ? profile.host : profile.name, 18, 0xFF152033, true);
-            card.addView(name);
+            titleRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView state = statusChip();
+            LinearLayout.LayoutParams chipParams = params(-2, -2);
+            chipParams.leftMargin = dp(8);
+            titleRow.addView(state, chipParams);
+            rowStatuses.put(profile.id, state);
+
+            TextView endpoint = text(profile.username + "@" + profile.host + ":" + profile.sshPort,
+                    14, 0xFF33415C, false);
+            LinearLayout.LayoutParams endpointParams = params(-1, -2);
+            endpointParams.topMargin = dp(8);
+            content.addView(endpoint, endpointParams);
+
+            TextView route = text("", 13, 0xFF65728A, false);
             Profile jump = profile.jumpProfileId == null || profile.jumpProfileId.isEmpty()
                     ? null : ProfileStore.get(this, profile.jumpProfileId);
-            String route = jump == null ? "" : "  ·  через " + jump.name;
-            TextView endpoint = text(profile.username + "@" + profile.host + ":" + profile.sshPort
-                    + route + "  ·  SOCKS5 : " + profile.localPort, 13, 0xFF65728A, false);
-            LinearLayout.LayoutParams endpointParams = params(-1, -2);
-            endpointParams.topMargin = dp(4);
-            card.addView(endpoint, endpointParams);
+            if (jump != null) {
+                route.setText("Маршрут через " + (jump.name.isEmpty() ? jump.host : jump.name));
+                LinearLayout.LayoutParams routeParams = params(-1, -2);
+                routeParams.topMargin = dp(3);
+                content.addView(route, routeParams);
+            }
+
+            LinearLayout socksRow = new LinearLayout(this);
+            socksRow.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout.LayoutParams socksParams = params(-1, -2);
+            socksParams.topMargin = dp(9);
+            content.addView(socksRow, socksParams);
+            TextView socksLabel = text("SOCKS5", 12, 0xFF65728A, true);
+            socksRow.addView(socksLabel);
+            TextView socksPort = text("127.0.0.1:" + profile.localPort, 13, 0xFF2457D6, true);
+            LinearLayout.LayoutParams socksPortParams = params(-2, -2);
+            socksPortParams.leftMargin = dp(8);
+            socksRow.addView(socksPort, socksPortParams);
 
             TextView fingerprint = text("", 12, 0xFF65728A, false);
             fingerprint.setTextIsSelectable(true);
+            fingerprint.setPadding(dp(12), dp(9), dp(12), dp(9));
+            GradientDrawable fingerprintBackground = new GradientDrawable();
+            fingerprintBackground.setColor(resolveColor(com.google.android.material.R.attr.colorSurface,
+                    0xFFF1F4F8));
+            fingerprintBackground.setCornerRadius(dp(12));
+            fingerprint.setBackground(fingerprintBackground);
             LinearLayout.LayoutParams fingerprintParams = params(-1, -2);
-            fingerprintParams.topMargin = dp(6);
-            card.addView(fingerprint, fingerprintParams);
+            fingerprintParams.topMargin = dp(10);
+            content.addView(fingerprint, fingerprintParams);
             rowFingerprints.put(profile.id, fingerprint);
             updateFingerprintStatus(fingerprint, profile);
-
-            TextView state = text("", 13, 0xFF33415C, false);
-            LinearLayout.LayoutParams stateParams = params(-1, -2);
-            stateParams.topMargin = dp(9);
-            card.addView(state, stateParams);
-            rowStatuses.put(profile.id, state);
 
             LinearLayout buttons = new LinearLayout(this);
             buttons.setOrientation(LinearLayout.HORIZONTAL);
             LinearLayout.LayoutParams buttonsParams = params(-1, -2);
-            buttonsParams.topMargin = dp(6);
-            card.addView(buttons, buttonsParams);
+            buttonsParams.topMargin = dp(10);
+            content.addView(buttons, buttonsParams);
 
-            Button action = new Button(this);
+            MaterialButton action = makeButton("Подключить", true);
             action.setOnClickListener(v -> toggle(profile));
-            buttons.addView(action, new LinearLayout.LayoutParams(0, -2, 1f));
+            buttons.addView(action, new LinearLayout.LayoutParams(0, dp(46), 1.25f));
             rowActions.put(profile.id, action);
 
-            Button edit = new Button(this);
-            edit.setText("Edit");
+            MaterialButton edit = makeButton("Изменить", false);
             edit.setOnClickListener(v -> showEditor(profile));
-            buttons.addView(edit, new LinearLayout.LayoutParams(0, -2, 1f));
+            LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
+            editParams.leftMargin = dp(6);
+            buttons.addView(edit, editParams);
 
-            Button delete = new Button(this);
-            delete.setText("Delete");
+            MaterialButton delete = makeButton("Удалить", false);
             delete.setOnClickListener(v -> confirmDelete(profile));
-            buttons.addView(delete, new LinearLayout.LayoutParams(0, -2, 1f));
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
+            deleteParams.leftMargin = dp(6);
+            buttons.addView(delete, deleteParams);
 
-            Button resetFingerprint = new Button(this);
-            resetFingerprint.setText("Удалить fingerprint");
+            MaterialButton resetFingerprint = makeButton("Сбросить fingerprint", false);
             resetFingerprint.setOnClickListener(v -> confirmFingerprintReset(profile));
-            card.addView(resetFingerprint, params(-1, -2));
+            LinearLayout.LayoutParams resetParams = params(-2, dp(42));
+            resetParams.topMargin = dp(4);
+            content.addView(resetFingerprint, resetParams);
             resetFingerprint.setVisibility(profile.hostFingerprint == null || profile.hostFingerprint.isEmpty()
                     ? View.GONE : View.VISIBLE);
             rowFingerprintResets.put(profile.id, resetFingerprint);
         }
         refreshStatuses();
     }
-
     private void refreshStatuses() {
         if (overallStatus == null) return;
         String status = ProfileStore.status(this);
@@ -252,65 +320,109 @@ public final class MainActivity extends Activity {
         Profile active = ProfileStore.get(this, profileId);
 
         if ("CONNECTED".equals(status)) {
-            overallStatus.setText("Подключено · SOCKS5 127.0.0.1:" + (active == null ? "" : active.localPort));
-            overallStatus.setTextColor(0xFF167447);
+            overallStatus.setText("Подключено  ·  SOCKS5 127.0.0.1:" + (active == null ? "" : active.localPort));
+            overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
         } else if ("CONNECTING".equals(status)) {
             overallStatus.setText("Подключение…");
-            overallStatus.setTextColor(0xFF8A5A00);
+            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
         } else if ("NEEDS_TRUST".equals(status)) {
-            overallStatus.setText("Подтвердите SSH fingerprint");
-            overallStatus.setTextColor(0xFF8A5A00);
+            overallStatus.setText("Нужно подтвердить fingerprint сервера");
+            overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
             askToTrust(profileId, detail);
         } else if ("NEEDS_PASSWORD".equals(status)) {
             overallStatus.setText("Требуется пароль SSH");
-            overallStatus.setTextColor(0xFF8A5A00);
+            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
             askForPassword(profileId, detail);
         } else if ("ERROR".equals(status)) {
-            overallStatus.setText("Ошибка подключения");
+            overallStatus.setText("Не удалось подключиться  ·  нажмите для подробностей");
             overallStatus.setTextColor(0xFFB42318);
         } else {
-            overallStatus.setText("Отключено");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
+            overallStatus.setText("Нет активного подключения");
+            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
         }
 
         for (String id : rowStatuses.keySet()) {
             TextView row = rowStatuses.get(id);
-            Button action = rowActions.get(id);
+            MaterialButton action = rowActions.get(id);
             Profile rowProfile = ProfileStore.get(this, id);
             TextView fingerprint = rowFingerprints.get(id);
             if (rowProfile != null && fingerprint != null) updateFingerprintStatus(fingerprint, rowProfile);
-            Button resetFingerprint = rowFingerprintResets.get(id);
+            MaterialButton resetFingerprint = rowFingerprintResets.get(id);
             if (resetFingerprint != null && rowProfile != null) {
                 resetFingerprint.setVisibility(rowProfile.hostFingerprint == null || rowProfile.hostFingerprint.isEmpty()
                         ? View.GONE : View.VISIBLE);
             }
             if (row == null || action == null) continue;
             if (!id.equals(profileId)) {
-                row.setText("Отключено");
+                boolean hasFingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
+                        && !rowProfile.observedFingerprint.isEmpty();
+                setStatusChip(row, hasFingerprintError ? "Fingerprint не совпал" : "Отключено",
+                        hasFingerprintError ? "ERROR" : "IDLE");
                 action.setText("Подключить");
+                styleButton(action, true);
             } else {
-                if ("ERROR".equals(status)) row.setText("Ошибка · нажмите для подробностей");
-                else if ("CONNECTED".equals(status)) row.setText("Подключено · " + detail);
-                else if ("CONNECTING".equals(status)) row.setText("Подключение…");
-                else if ("NEEDS_TRUST".equals(status)) row.setText("Ожидает подтверждения fingerprint");
-                else if ("NEEDS_PASSWORD".equals(status)) row.setText("Ожидает пароль для узла цепочки");
-                else row.setText("Отключено");
-                row.setOnClickListener(v -> {
-                    if ("ERROR".equals(ProfileStore.status(this))
-                            && id.equals(ProfileStore.statusProfile(this))) {
-                        new AlertDialog.Builder(this).setTitle("Ошибка подключения")
-                                .setMessage(ProfileStore.statusDetail(this))
-                                .setPositiveButton("Закрыть", null).setNeutralButton("Подробности", (d, w) ->
-                                        new AlertDialog.Builder(this).setTitle("Техническая информация")
-                                                .setMessage(ProfileStore.statusDetail(this))
-                                                .setPositiveButton("Закрыть", null).show()).show();
-                    }
-                });
+                if ("ERROR".equals(status)) {
+                    boolean fingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
+                            && !rowProfile.observedFingerprint.isEmpty();
+                    setStatusChip(row, fingerprintError ? "Fingerprint не совпал" : "Ошибка",
+                            "ERROR");
+                    row.setOnClickListener(v -> new AlertDialog.Builder(this)
+                            .setTitle("Ошибка подключения")
+                            .setMessage(ProfileStore.statusDetail(this))
+                            .setPositiveButton("Закрыть", null)
+                            .setNeutralButton("Технические подробности", (d, w) ->
+                                    new AlertDialog.Builder(this).setTitle("Технические подробности")
+                                            .setMessage(ProfileStore.statusDetail(this))
+                                            .setPositiveButton("Закрыть", null).show()).show());
+                } else if ("CONNECTED".equals(status)) {
+                    setStatusChip(row, "Подключено", "CONNECTED");
+                } else if ("CONNECTING".equals(status)) {
+                    setStatusChip(row, "Подключение…", "CONNECTING");
+                } else if ("NEEDS_TRUST".equals(status)) {
+                    setStatusChip(row, "Ожидает проверки", "CONNECTING");
+                } else if ("NEEDS_PASSWORD".equals(status)) {
+                    setStatusChip(row, "Ожидает пароль", "CONNECTING");
+                } else {
+                    setStatusChip(row, "Отключено", "IDLE");
+                }
                 boolean running = "CONNECTED".equals(status) || "CONNECTING".equals(status)
                         || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status);
                 action.setText(running ? "Отключить" : "Подключить");
+                styleButton(action, !running);
             }
         }
+    }
+
+    private TextView statusChip() {
+        TextView chip = text("", 11, 0xFF65728A, true);
+        chip.setGravity(Gravity.CENTER);
+        chip.setPadding(dp(10), dp(6), dp(10), dp(6));
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(20));
+        chip.setBackground(background);
+        return chip;
+    }
+
+    private void setStatusChip(TextView chip, String label, String state) {
+        chip.setText(label);
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(20));
+        boolean dark = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        if ("CONNECTED".equals(state)) {
+            background.setColor(dark ? 0xFF173B2D : 0xFFE7F5EC);
+            chip.setTextColor(dark ? 0xFF8DE0AF : 0xFF176B3A);
+        } else if ("ERROR".equals(state)) {
+            background.setColor(dark ? 0xFF492526 : 0xFFFCEBEC);
+            chip.setTextColor(dark ? 0xFFFFB4AB : 0xFFB42318);
+        } else if ("CONNECTING".equals(state)) {
+            background.setColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF1F4F8));
+            chip.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
+        } else {
+            background.setColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF1F4F8));
+            chip.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
+        }
+        chip.setBackground(background);
     }
 
     private void askToTrust(String profileId, String fingerprint) {
@@ -331,11 +443,11 @@ public final class MainActivity extends Activity {
         }
         String server = node.username + "@" + node.host + ":" + node.sshPort;
         new AlertDialog.Builder(this)
-                .setTitle("Trust SSH server?")
-                .setMessage("Server: " + server
+                .setTitle("Подтвердите SSH-сервер")
+                .setMessage("Сервер: " + server
                         + "\n\nFingerprint:\n" + shownFingerprint
-                        + "\n\nCompare this value with the server administrator over a trusted channel before accepting.")
-                .setPositiveButton("Trust and connect", (dialog, which) -> {
+                        + "\n\nСравните значение с fingerprint сервера по доверенному каналу перед подтверждением.")
+                .setPositiveButton("Доверять и подключиться", (dialog, which) -> {
                     promptedFingerprint = "";
                     startTunnelAction(SshTunnelService.ACTION_TRUST, profileId);
                 })
@@ -404,7 +516,7 @@ public final class MainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
             else startService(intent);
         } catch (Exception e) {
-            Toast.makeText(this, "Could not start tunnel: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Не удалось запустить подключение: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -488,7 +600,7 @@ public final class MainActivity extends Activity {
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         password.setHint(profile.encryptedPassword == null || profile.encryptedPassword.isEmpty()
                 ? "Пароль SSH (необязательно)" : "Сохранённый пароль есть · пустое поле оставит его");
-        Button clearPassword = new Button(this);
+        MaterialButton clearPassword = new MaterialButton(this);
         clearPassword.setText("Удалить сохранённый пароль");
         final boolean[] removePassword = {false};
         clearPassword.setOnClickListener(v -> {
@@ -680,8 +792,7 @@ public final class MainActivity extends Activity {
             row.addView(label);
             LinearLayout actions = new LinearLayout(this);
             actions.setOrientation(LinearLayout.HORIZONTAL);
-            Button rename = new Button(this);
-            rename.setText("Переименовать");
+            MaterialButton rename = makeButton("Переименовать", false);
             rename.setOnClickListener(v -> {
                 SshKey current = SshKeyStore.get(this, key.id);
                 if (current == null) return;
@@ -697,8 +808,7 @@ public final class MainActivity extends Activity {
                             }
                         }).show();
             });
-            Button delete = new Button(this);
-            delete.setText("Удалить");
+            MaterialButton delete = makeButton("Удалить", false);
             delete.setOnClickListener(v -> new AlertDialog.Builder(this)
                     .setTitle("Удалить ключ?")
                     .setMessage("Ключ будет удалён из общего хранилища.")
@@ -719,23 +829,23 @@ public final class MainActivity extends Activity {
 
     private void showSaveKeyDialog() {
         if (pendingVaultKey == null) return;
-        EditText name = input("Key name", pendingVaultKeyName, InputType.TYPE_CLASS_TEXT);
-        EditText passphrase = input("Key passphrase (if encrypted)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        EditText name = input("Название ключа", pendingVaultKeyName, InputType.TYPE_CLASS_TEXT);
+        EditText passphrase = input("Парольная фраза ключа (если зашифрован)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(dp(20), dp(8), dp(20), dp(4));
         form.addView(name);
         form.addView(passphrase);
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Save private key")
+                .setTitle("Сохранить приватный ключ")
                 .setView(form)
-                .setNegativeButton("Cancel", (d, w) -> pendingVaultKey = null)
-                .setPositiveButton("Save", null)
+                .setNegativeButton("Отмена", (d, w) -> pendingVaultKey = null)
+                .setPositiveButton("Сохранить", null)
                 .create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
                 String keyName = name.getText().toString().trim();
-                if (keyName.isEmpty()) keyName = "SSH key";
+                if (keyName.isEmpty()) keyName = "SSH-ключ";
                 String secret = passphrase.getText().toString();
                 SshKey key = new SshKey(
                         keyName,
@@ -744,10 +854,10 @@ public final class MainActivity extends Activity {
                 SshKeyStore.save(this, key);
                 pendingVaultKey = null;
                 dialog.dismiss();
-                Toast.makeText(this, "Key saved in the vault", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Ключ сохранён в общем хранилище", Toast.LENGTH_SHORT).show();
                 showKeyManager();
             } catch (Exception e) {
-                Toast.makeText(this, e.getMessage() == null ? "Could not save key" : e.getMessage(), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, e.getMessage() == null ? "Не удалось сохранить ключ" : e.getMessage(), Toast.LENGTH_LONG).show();
             }
         }));
         dialog.show();
@@ -787,16 +897,56 @@ public final class MainActivity extends Activity {
         Uri uri = data.getData();
         try (InputStream input = getContentResolver().openInputStream(uri);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            if (input == null) throw new IllegalStateException("Could not read selected file");
+            if (input == null) throw new IllegalStateException("Не удалось прочитать выбранный файл");
             byte[] buffer = new byte[8192];
             int count;
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             pendingVaultKey = output.toByteArray();
             String filename = uri.getLastPathSegment();
-            pendingVaultKeyName = filename == null || filename.trim().isEmpty() ? "SSH key" : filename;
+            pendingVaultKeyName = filename == null || filename.trim().isEmpty() ? "SSH-ключ" : filename;
             showSaveKeyDialog();
         } catch (Exception e) {
-            Toast.makeText(this, "Could not read key: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Не удалось прочитать ключ: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private MaterialCardView surfaceCard() {
+        MaterialCardView card = new MaterialCardView(this);
+        card.setRadius(dp(18));
+        card.setCardElevation(dp(1));
+        card.setStrokeWidth(dp(1));
+        card.setStrokeColor(resolveColor(com.google.android.material.R.attr.colorOutlineVariant, 0xFFE0E3E8));
+        card.setCardBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFFFFFFF));
+        return card;
+    }
+
+    private MaterialButton makeButton(String label, boolean primary) {
+        MaterialButton button = new MaterialButton(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(14);
+        button.setMinHeight(dp(44));
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setCornerRadius(dp(13));
+        button.setElevation(0);
+        styleButton(button, primary);
+        return button;
+    }
+
+    private void styleButton(MaterialButton button, boolean primary) {
+        if (primary) {
+            button.setBackgroundTintList(ColorStateList.valueOf(
+                    resolveColor(android.R.attr.colorAccent, 0xFF2457D6)));
+            button.setTextColor(0xFFFFFFFF);
+            button.setStrokeWidth(0);
+        } else {
+            button.setBackgroundTintList(ColorStateList.valueOf(
+                    resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFFFFFFF)));
+            button.setStrokeColor(ColorStateList.valueOf(
+                    resolveColor(com.google.android.material.R.attr.colorOutlineVariant, 0xFFE0E3E8)));
+            button.setStrokeWidth(dp(1));
+            button.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
         }
     }
 
