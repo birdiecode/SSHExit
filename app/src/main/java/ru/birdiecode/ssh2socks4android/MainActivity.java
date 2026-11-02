@@ -232,12 +232,18 @@ public final class MainActivity extends Activity {
         promptedFingerprint = fingerprint;
         Profile profile = ProfileStore.get(this, profileId);
         if (profile == null) return;
-        boolean isJump = fingerprint.startsWith("JUMP:");
-        String shownFingerprint = fingerprint.startsWith("JUMP:") || fingerprint.startsWith("TARGET:")
-                ? fingerprint.substring(fingerprint.indexOf(':') + 1) : fingerprint;
-        String server = isJump
-                ? profile.jumpUsername + "@" + profile.jumpHost + ":" + profile.jumpPort
-                : profile.username + "@" + profile.host + ":" + profile.sshPort;
+        String[] trustParts = fingerprint.split(":", 3);
+        Profile node = profile;
+        String shownFingerprint = fingerprint;
+        if (trustParts.length == 3 && "NODE".equals(trustParts[0])) {
+            Profile resolved = ProfileStore.get(this, trustParts[1]);
+            if (resolved != null) node = resolved;
+            shownFingerprint = trustParts[2];
+        } else if ((fingerprint.startsWith("JUMP:") || fingerprint.startsWith("TARGET:"))
+                && fingerprint.indexOf(':') >= 0) {
+            shownFingerprint = fingerprint.substring(fingerprint.indexOf(':') + 1);
+        }
+        String server = node.username + "@" + node.host + ":" + node.sshPort;
         new AlertDialog.Builder(this)
                 .setTitle("Trust SSH server?")
                 .setMessage("Server: " + server
