@@ -100,9 +100,11 @@ public final class SshTunnelService extends Service {
             for (Profile node : chain) {
                 JSch jsch = new JSch();
                 addAllVaultKeys(jsch);
+                PinnedHostKeyRepository pinning = new PinnedHostKeyRepository(node.hostFingerprint);
+                jsch.setHostKeyRepository(pinning);
                 Session session = jsch.getSession(node.username, node.host, node.sshPort);
                 session.setConfig("PreferredAuthentications", "publickey,password");
-                session.setConfig("StrictHostKeyChecking", "no");
+                session.setConfig("StrictHostKeyChecking", "yes");
                 if (node.encryptedPassword != null && !node.encryptedPassword.isEmpty()) {
                     session.setPassword(KeyVault.decrypt(node.encryptedPassword));
                 }
@@ -111,18 +113,15 @@ public final class SshTunnelService extends Service {
                     session.connect(20_000);
                 } catch (Exception e) {
                     try { session.disconnect(); } catch (Exception ignored) {}
+                    String offered = pinning.getOfferedFingerprint();
+                    if (!offered.isEmpty() && (node.hostFingerprint == null || node.hostFingerprint.isEmpty())) {
+                        requestTrust(targetId, node.id, offered);
+                        return;
+                    }
+                    if (!offered.isEmpty()) {
+                        throw new NodeException(node, "SSH host key changed; verify it before updating the saved fingerprint", null);
+                    }
                     throw new NodeException(node, "SSH authentication/connection failed", e);
-                }
-
-                String actualFingerprint = fingerprint(session);
-                if (node.hostFingerprint == null || node.hostFingerprint.isEmpty()) {
-                    try { session.disconnect(); } catch (Exception ignored) {}
-                    requestTrust(targetId, node.id, actualFingerprint);
-                    return;
-                }
-                if (!node.hostFingerprint.equals(actualFingerprint)) {
-                    try { session.disconnect(); } catch (Exception ignored) {}
-                    throw new NodeException(node, "SSH host key changed; verify it before updating the saved fingerprint", null);
                 }
                 activeSessions.add(session);
                 previous = session;
@@ -180,12 +179,6 @@ public final class SshTunnelService extends Service {
                     ? null : KeyVault.decrypt(key.encryptedPassphrase);
             jsch.addIdentity("vault-" + key.id, privateKey, null, passphrase);
         }
-    }
-
-    private String fingerprint(Session session) throws Exception {
-        byte[] hostKey = Base64.decode(session.getHostKey().getKey(), Base64.DEFAULT);
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(hostKey);
-        return "SHA256:" + Base64.encodeToString(digest, Base64.NO_PADDING | Base64.NO_WRAP);
     }
 
     private void requestTrust(String targetId, String nodeId, String fingerprint) {
