@@ -34,6 +34,7 @@ final class ProfileStore {
                 p.username = json.optString("username");
                 p.localPort = json.optInt("localPort", 1080);
                 p.encryptedKey = json.optString("encryptedKey");
+                p.encryptedPassword = json.optString("encryptedPassword");
                 p.encryptedPassphrase = json.optString("encryptedPassphrase");
                 p.hostFingerprint = json.optString("hostFingerprint");
                 if (!p.id.isEmpty()) profiles.add(p);
@@ -110,6 +111,7 @@ final class ProfileStore {
             json.put("username", p.username);
             json.put("localPort", p.localPort);
             json.put("encryptedKey", p.encryptedKey);
+            json.put("encryptedPassword", p.encryptedPassword);
             json.put("encryptedPassphrase", p.encryptedPassphrase);
             json.put("hostFingerprint", p.hostFingerprint);
         } catch (Exception ignored) {}
