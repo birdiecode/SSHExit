@@ -436,19 +436,19 @@ public final class MainActivity extends Activity {
         String trusted = profile.hostFingerprint == null ? "" : profile.hostFingerprint;
         String observed = profile.observedFingerprint == null ? "" : profile.observedFingerprint;
         if (!observed.isEmpty()) {
-            view.setText("Проверка fingerprint не пройдена\\nДоверенный: " + trusted + "\\nПолучен: " + observed);
+            view.setText("Проверка fingerprint не пройдена\nДоверенный: " + trusted + "\nПолучен: " + observed);
             view.setTextColor(resolveColor(com.google.android.material.R.attr.colorError, 0xFFB42318));
             return;
         }
         if (!trusted.isEmpty()) {
-            view.setText("Доверенный fingerprint\\n" + trusted);
+            view.setText("Доверенный fingerprint\n" + trusted);
             view.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
             return;
         }
         String pending = ProfileStore.statusDetail(this);
         String nodePrefix = "NODE:" + profile.id + ":";
         if ("NEEDS_TRUST".equals(ProfileStore.status(this)) && pending != null && pending.startsWith(nodePrefix)) {
-            view.setText("Fingerprint ожидает подтверждения\\n" + pending.substring(nodePrefix.length()));
+            view.setText("Fingerprint ожидает подтверждения\n" + pending.substring(nodePrefix.length()));
             view.setTextColor(resolveColor(com.google.android.material.R.attr.colorPrimary, 0xFF2457D6));
         } else {
             view.setText("Доверенный fingerprint не задан");
