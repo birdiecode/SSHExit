@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private byte[] pendingVaultKey;
     private String pendingVaultKeyName = "";
     private String promptedFingerprint = "";
+    private String promptedPasswordRequest = "";
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -240,6 +241,10 @@ public final class MainActivity extends Activity {
             overallStatus.setText("Подтвердите SSH fingerprint");
             overallStatus.setTextColor(0xFF8A5A00);
             askToTrust(profileId, detail);
+        } else if ("NEEDS_PASSWORD".equals(status)) {
+            overallStatus.setText("Требуется пароль SSH");
+            overallStatus.setTextColor(0xFF8A5A00);
+            askForPassword(profileId, detail);
         } else if ("ERROR".equals(status)) {
             overallStatus.setText("Ошибка подключения");
             overallStatus.setTextColor(0xFFB42318);
@@ -260,6 +265,7 @@ public final class MainActivity extends Activity {
                 else if ("CONNECTED".equals(status)) row.setText("Подключено · " + detail);
                 else if ("CONNECTING".equals(status)) row.setText("Подключение…");
                 else if ("NEEDS_TRUST".equals(status)) row.setText("Ожидает подтверждения fingerprint");
+                else if ("NEEDS_PASSWORD".equals(status)) row.setText("Ожидает пароль для узла цепочки");
                 else row.setText("Отключено");
                 row.setOnClickListener(v -> {
                     if ("ERROR".equals(ProfileStore.status(this))
@@ -311,11 +317,50 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
+    private void askForPassword(String targetId, String request) {
+        if (request == null || !request.startsWith("NODE:") || request.equals(promptedPasswordRequest)) return;
+        String nodeId = request.substring("NODE:".length());
+        Profile node = ProfileStore.get(this, nodeId);
+        if (node == null) return;
+        promptedPasswordRequest = request;
+        EditText password = input("SSH-пароль для " + node.username + "@" + node.host, "",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this)
+                .setTitle("Требуется пароль SSH")
+                .setMessage("Пароль запрашивается для " + node.username + "@" + node.host + ":" + node.sshPort
+                        + ". Он будет сохранён только после успешной парольной авторизации.")
+                .setView(password)
+                .setNegativeButton("Отмена", (d, w) -> {
+                    promptedPasswordRequest = "";
+                    startTunnelAction(SshTunnelService.ACTION_STOP, targetId);
+                })
+                .setPositiveButton("Подключиться", (d, w) -> {
+                    promptedPasswordRequest = "";
+                    String value = password.getText().toString();
+                    if (value.isEmpty()) {
+                        Toast.makeText(this, "Введите пароль или отмените подключение", Toast.LENGTH_LONG).show();
+                        startTunnelAction(SshTunnelService.ACTION_STOP, targetId);
+                        return;
+                    }
+                    Intent intent = new Intent(this, SshTunnelService.class);
+                    intent.setAction(SshTunnelService.ACTION_PASSWORD);
+                    intent.putExtra(SshTunnelService.EXTRA_PROFILE_ID, targetId);
+                    intent.putExtra(SshTunnelService.EXTRA_NODE_ID, nodeId);
+                    intent.putExtra(SshTunnelService.EXTRA_PASSWORD, value);
+                    try {
+                        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
+                        else startService(intent);
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show();
+                    }
+                }).show();
+    }
+
     private void toggle(Profile profile) {
         String status = ProfileStore.status(this);
         String activeId = ProfileStore.statusProfile(this);
         if (profile.id.equals(activeId) && ("CONNECTED".equals(status)
-                || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status))) {
+                || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status))) {
             startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
         } else {
             startTunnelAction(SshTunnelService.ACTION_CONNECT, profile.id);
