@@ -228,12 +228,16 @@ public final class SshTunnelService extends Service {
         // Keep the foreground service alive while the activity asks for the password.
     }
 
-    private void addAllVaultKeys(JSch jsch) throws Exception {
+    private void addAllVaultKeys(JSch jsch) {
         for (SshKey key : SshKeyStore.all(this)) {
-            byte[] privateKey = KeyVault.decrypt(key.encryptedPrivateKey);
-            byte[] passphrase = key.encryptedPassphrase == null || key.encryptedPassphrase.isEmpty()
-                    ? null : KeyVault.decrypt(key.encryptedPassphrase);
-            jsch.addIdentity("vault-" + key.id, privateKey, null, passphrase);
+            try {
+                byte[] privateKey = KeyVault.decrypt(key.encryptedPrivateKey);
+                byte[] passphrase = key.encryptedPassphrase == null || key.encryptedPassphrase.isEmpty()
+                        ? null : KeyVault.decrypt(key.encryptedPassphrase);
+                jsch.addIdentity("vault-" + key.id, privateKey, null, passphrase);
+            } catch (Exception ignored) {
+                // An unreadable or unsupported key must not prevent trying other identities.
+            }
         }
     }
 
