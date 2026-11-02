@@ -333,108 +333,115 @@ public final class MainActivity extends Activity {
     }
 
     private void showEditor(Profile existing) {
-        final Profile profile = existing == null
-                ? new Profile("", "", 22, "", 1080)
-                : copy(existing);
-
+        final Profile profile = existing == null ? new Profile("", "", 22, "", 1080) : copy(existing);
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(20), dp(8), dp(20), dp(4));
+        form.setPadding(dp(16), dp(8), dp(16), dp(8));
 
-        EditText name = input("Profile name", profile.name, InputType.TYPE_CLASS_TEXT);
-        EditText host = input("SSH host or IP", profile.host, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        EditText sshPort = input("SSH port", String.valueOf(profile.sshPort), InputType.TYPE_CLASS_NUMBER);
-        EditText username = input("Username", profile.username, InputType.TYPE_CLASS_TEXT);
-        EditText localPort = input("Local SOCKS5 port", String.valueOf(profile.localPort), InputType.TYPE_CLASS_NUMBER);
-        EditText sshPassword = input("SSH password (blank keeps saved value)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        TextView jumpTitle = text("Jump server · ProxyJump (-J)", 16, 0xFF152033, true);
-        LinearLayout.LayoutParams jumpTitleParams = params(-1, -2);
-        jumpTitleParams.topMargin = dp(14);
-        form.addView(jumpTitle, jumpTitleParams);
+        EditText name = input("Название", profile.name, InputType.TYPE_CLASS_TEXT);
+        EditText host = input("Адрес сервера", profile.host,
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        EditText sshPort = input("SSH-порт", String.valueOf(profile.sshPort), InputType.TYPE_CLASS_NUMBER);
+        EditText username = input("Имя пользователя", profile.username, InputType.TYPE_CLASS_TEXT);
+        EditText localPort = input("Локальный SOCKS5-порт", String.valueOf(profile.localPort), InputType.TYPE_CLASS_NUMBER);
+        EditText password = input("Пароль SSH (необязательно)", "",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        password.setHint(profile.encryptedPassword == null || profile.encryptedPassword.isEmpty()
+                ? "Пароль SSH (необязательно)" : "Сохранённый пароль есть · пустое поле оставит его");
+        Button clearPassword = new Button(this);
+        clearPassword.setText("Удалить сохранённый пароль");
+        final boolean[] removePassword = {false};
+        clearPassword.setOnClickListener(v -> {
+            removePassword[0] = true;
+            password.setText("");
+            password.setHint("Пароль будет удалён при сохранении");
+        });
+        form.addView(name);
+        form.addView(host);
+        form.addView(sshPort);
+        form.addView(username);
+        form.addView(password);
+        form.addView(clearPassword);
 
-        TextView jumpTitle = text("Подключаться через", 16, 0xFF152033, true);
-        LinearLayout.LayoutParams jumpTitleParams = params(-1, -2);
-        jumpTitleParams.topMargin = dp(14);
-        form.addView(jumpTitle, jumpTitleParams);
+        TextView routeTitle = text("Подключаться через", 16, 0xFF152033, true);
+        LinearLayout.LayoutParams routeTitleParams = params(-1, -2);
+        routeTitleParams.topMargin = dp(12);
+        form.addView(routeTitle, routeTitleParams);
 
-        ArrayList<Profile> jumpOptions = new ArrayList<>();
-        jumpOptions.add(null);
-        String legacyJumpId = profile.jumpProfileId == null ? "" : profile.jumpProfileId;
-        List<Profile> availableHosts = ProfileStore.all(this);
-        for (Profile candidate : availableHosts) {
+        ArrayList<Profile> options = new ArrayList<>();
+        options.add(null);
+        String selectedId = profile.jumpProfileId == null ? "" : profile.jumpProfileId;
+        List<Profile> saved = ProfileStore.all(this);
+        for (Profile candidate : saved) {
             if (candidate.id.equals(profile.id)) continue;
-            if (legacyJumpId.isEmpty() && profile.jumpHost != null
+            if (selectedId.isEmpty() && profile.jumpHost != null
                     && candidate.host.equalsIgnoreCase(profile.jumpHost)
                     && candidate.sshPort == profile.jumpPort
-                    && candidate.username.equals(profile.jumpUsername)) {
-                legacyJumpId = candidate.id;
-            }
-            jumpOptions.add(candidate);
+                    && candidate.username.equals(profile.jumpUsername)) selectedId = candidate.id;
+            options.add(candidate);
         }
-        ArrayList<String> jumpLabels = new ArrayList<>();
-        jumpLabels.add("Напрямую");
-        int jumpSelection = 0;
-        for (int i = 1; i < jumpOptions.size(); i++) {
-            Profile candidate = jumpOptions.get(i);
-            jumpLabels.add(candidate.name + " · " + candidate.username + "@" + candidate.host);
-            if (candidate.id.equals(legacyJumpId)) jumpSelection = i;
+        ArrayList<String> labels = new ArrayList<>();
+        labels.add("Напрямую");
+        int selectedIndex = 0;
+        for (int i = 1; i < options.size(); i++) {
+            Profile candidate = options.get(i);
+            labels.add(candidate.name + " · " + candidate.username + "@" + candidate.host);
+            if (candidate.id.equals(selectedId)) selectedIndex = i;
         }
-        Spinner jumpProfile = new Spinner(this);
-        jumpProfile.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                jumpLabels));
-        jumpProfile.setSelection(jumpSelection);
-        form.addView(jumpProfile);
-        EditText sshPassword = input("SSH password (optional; blank keeps saved value)", "",
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        form.addView(sshPassword);
+        Spinner route = new Spinner(this);
+        route.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        route.setSelection(selectedIndex);
+        form.addView(route);
+        form.addView(localPort);
 
         ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
         scroll.addView(form);
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(existing == null ? "Add connection" : "Edit connection")
-                .setView(scroll)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Save", null)
-                .create();
-
+                .setTitle(existing == null ? "Добавить хост" : "Изменить хост")
+                .setView(scroll).setNegativeButton("Отмена", null)
+                .setPositiveButton("Сохранить", null).create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
                 String hostValue = host.getText().toString().trim();
                 String userValue = username.getText().toString().trim();
-                int sshPortValue = parsePort(sshPort.getText().toString(), "SSH port");
-                int localPortValue = parsePort(localPort.getText().toString(), "SOCKS5 port");
-                if (hostValue.isEmpty() || userValue.isEmpty()) throw new IllegalArgumentException("Host and username are required");
-                if (localPortValue < 1024) throw new IllegalArgumentException("SOCKS5 port must be 1024–65535");
-
-                Profile selectedJump = jumpOptions.get(jumpProfile.getSelectedItemPosition());
-                String selectedJumpId = selectedJump == null ? "" : selectedJump.id;
-                if (!selectedJumpId.isEmpty() && wouldCreateCycle(profile.id, selectedJumpId)) {
-                    throw new IllegalArgumentException("This ProxyJump would create a cycle");
+                int sshPortValue = parsePort(sshPort.getText().toString(), "SSH-порт");
+                int socksPortValue = parsePort(localPort.getText().toString(), "SOCKS5-порт");
+                if (hostValue.isEmpty() || userValue.isEmpty()) {
+                    throw new IllegalArgumentException("Укажите адрес сервера и имя пользователя");
                 }
+                if (socksPortValue < 1024) throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
 
+                Profile jump = options.get(route.getSelectedItemPosition());
+                String jumpId = jump == null ? "" : jump.id;
+                if (!jumpId.isEmpty() && wouldCreateCycle(profile.id, jumpId)) {
+                    throw new IllegalArgumentException("Эта настройка создаёт циклический ProxyJump");
+                }
                 profile.name = name.getText().toString().trim();
                 if (profile.name.isEmpty()) profile.name = hostValue;
                 profile.host = hostValue;
                 profile.username = userValue;
                 profile.sshPort = sshPortValue;
-                profile.localPort = localPortValue;
-                profile.jumpProfileId = selectedJumpId;
-                // Clear inline jump data after migrating to a host reference.
+                profile.localPort = socksPortValue;
+                profile.jumpProfileId = jumpId;
                 profile.jumpHost = "";
                 profile.jumpUsername = "";
                 profile.encryptedJumpPassword = "";
                 profile.jumpKeyId = "";
                 profile.jumpFingerprint = "";
 
-
-                String password = sshPassword.getText().toString();
-                if (!password.isEmpty()) profile.encryptedPassword = KeyVault.encrypt(password.getBytes(StandardCharsets.UTF_8));
+                if (removePassword[0]) profile.encryptedPassword = "";
+                String enteredPassword = password.getText().toString();
+                if (!enteredPassword.isEmpty()) {
+                    profile.encryptedPassword = KeyVault.encrypt(enteredPassword.getBytes(StandardCharsets.UTF_8));
+                }
 
                 ProfileStore.save(this, profile);
                 dialog.dismiss();
                 renderProfiles();
             } catch (Exception e) {
-                Toast.makeText(this, e.getMessage() == null ? "Could not save profile" : e.getMessage(), Toast.LENGTH_LONG).show();
+                Toast.makeText(this, e.getMessage() == null ? "Не удалось сохранить хост" : e.getMessage(),
+                        Toast.LENGTH_LONG).show();
             }
         }));
         dialog.show();
