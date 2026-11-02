@@ -9,10 +9,17 @@ final class Profile {
     int sshPort = 22;
     String username = "";
     int localPort = 1080;
+    String keyId = "";
     String encryptedKey = "";
     String encryptedPassword = "";
     String encryptedPassphrase = "";
     String hostFingerprint = "";
+    String jumpHost = "";
+    int jumpPort = 22;
+    String jumpUsername = "";
+    String encryptedJumpPassword = "";
+    String jumpKeyId = "";
+    String jumpFingerprint = "";
 
     Profile() {}
 
