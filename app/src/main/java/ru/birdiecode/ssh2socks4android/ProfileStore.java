@@ -38,6 +38,7 @@ final class ProfileStore {
                 p.encryptedPassword = json.optString("encryptedPassword");
                 p.encryptedPassphrase = json.optString("encryptedPassphrase");
                 p.hostFingerprint = json.optString("hostFingerprint");
+                p.jumpProfileId = json.optString("jumpProfileId");
                 p.jumpHost = json.optString("jumpHost");
                 p.jumpPort = json.optInt("jumpPort", 22);
                 p.jumpUsername = json.optString("jumpUsername");
@@ -73,10 +74,20 @@ final class ProfileStore {
         prefs(context).edit().putString(PROFILES, array.toString()).apply();
     }
 
+    static synchronized List<Profile> dependents(Context context, String id) {
+        ArrayList<Profile> result = new ArrayList<>();
+        for (Profile p : all(context)) if (id.equals(p.jumpProfileId)) result.add(p);
+        return result;
+    }
+
     static synchronized void delete(Context context, String id) {
         List<Profile> profiles = all(context);
         JSONArray array = new JSONArray();
-        for (Profile p : profiles) if (!p.id.equals(id)) array.put(toJson(p));
+        for (Profile p : profiles) {
+            if (p.id.equals(id)) continue;
+            if (id.equals(p.jumpProfileId)) p.jumpProfileId = "";
+            array.put(toJson(p));
+        }
         prefs(context).edit().putString(PROFILES, array.toString()).apply();
     }
 
@@ -122,6 +133,7 @@ final class ProfileStore {
             json.put("encryptedPassword", p.encryptedPassword);
             json.put("encryptedPassphrase", p.encryptedPassphrase);
             json.put("hostFingerprint", p.hostFingerprint);
+            json.put("jumpProfileId", p.jumpProfileId);
             json.put("jumpHost", p.jumpHost);
             json.put("jumpPort", p.jumpPort);
             json.put("jumpUsername", p.jumpUsername);
