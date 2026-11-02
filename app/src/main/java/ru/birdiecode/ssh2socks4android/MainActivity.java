@@ -305,29 +305,6 @@ public final class MainActivity extends Activity {
         EditText username = input("Username", profile.username, InputType.TYPE_CLASS_TEXT);
         EditText localPort = input("Local SOCKS5 port", String.valueOf(profile.localPort), InputType.TYPE_CLASS_NUMBER);
         EditText sshPassword = input("SSH password (blank keeps saved value)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        final String[] targetKeyId = {profile.keyId == null ? "" : profile.keyId};
-        final boolean[] targetKeyChanged = {false};
-
-        form.addView(name);
-        form.addView(host);
-        form.addView(sshPort);
-        form.addView(username);
-        form.addView(localPort);
-        form.addView(sshPassword);
-
-        TextView targetKeyLabel = text(keyLabel(profile), 12, 0xFF65728A, false);
-        LinearLayout.LayoutParams labelParams = params(-1, -2);
-        labelParams.topMargin = dp(6);
-        form.addView(targetKeyLabel, labelParams);
-        Button chooseTargetKey = new Button(this);
-        chooseTargetKey.setText("Choose target key from vault");
-        chooseTargetKey.setOnClickListener(v -> showKeyPicker(targetKeyId[0], true, selected -> {
-            targetKeyId[0] = selected == null ? "" : selected.id;
-            targetKeyChanged[0] = true;
-            targetKeyLabel.setText(selected == null ? "No private key selected" : "Key: " + selected.name);
-        }));
-        form.addView(chooseTargetKey);
-
         TextView jumpTitle = text("Jump server · ProxyJump (-J)", 16, 0xFF152033, true);
         LinearLayout.LayoutParams jumpTitleParams = params(-1, -2);
         jumpTitleParams.topMargin = dp(14);
@@ -337,30 +314,10 @@ public final class MainActivity extends Activity {
         EditText jumpPort = input("Jump SSH port", String.valueOf(profile.jumpPort), InputType.TYPE_CLASS_NUMBER);
         EditText jumpUsername = input("Jump server username", profile.jumpUsername, InputType.TYPE_CLASS_TEXT);
         EditText jumpPassword = input("Jump server password (blank keeps saved value)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        final String[] jumpKeyId = {profile.jumpKeyId == null ? "" : profile.jumpKeyId};
-        final boolean[] jumpKeyChanged = {false};
         form.addView(jumpHost);
         form.addView(jumpPort);
         form.addView(jumpUsername);
         form.addView(jumpPassword);
-
-        TextView jumpKeyLabel = text(jumpKeyLabel(profile), 12, 0xFF65728A, false);
-        LinearLayout.LayoutParams jumpKeyLabelParams = params(-1, -2);
-        jumpKeyLabelParams.topMargin = dp(6);
-        form.addView(jumpKeyLabel, jumpKeyLabelParams);
-        Button chooseJumpKey = new Button(this);
-        chooseJumpKey.setText("Choose jump server key from vault");
-        chooseJumpKey.setOnClickListener(v -> showKeyPicker(jumpKeyId[0], true, selected -> {
-            jumpKeyId[0] = selected == null ? "" : selected.id;
-            jumpKeyChanged[0] = true;
-            jumpKeyLabel.setText(selected == null ? "No jump key selected" : "Key: " + selected.name);
-        }));
-        form.addView(chooseJumpKey);
-
-        TextView vaultHint = text("Manage reusable private keys with the SSH keys button on the main screen.", 12, 0xFF65728A, false);
-        LinearLayout.LayoutParams hintParams = params(-1, -2);
-        hintParams.topMargin = dp(8);
-        form.addView(vaultHint, hintParams);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(form);
@@ -397,38 +354,11 @@ public final class MainActivity extends Activity {
                 profile.jumpPort = jumpPortValue;
                 profile.jumpUsername = jumpUsernameValue;
 
-                if (targetKeyChanged[0]) {
-                    profile.keyId = targetKeyId[0];
-                    if (targetKeyId[0].isEmpty()) {
-                        profile.encryptedKey = "";
-                        profile.encryptedPassphrase = "";
-                    }
-                }
-                if (jumpKeyChanged[0]) profile.jumpKeyId = jumpKeyId[0];
-
                 String password = sshPassword.getText().toString();
                 if (!password.isEmpty()) profile.encryptedPassword = KeyVault.encrypt(password.getBytes(StandardCharsets.UTF_8));
                 String jumpPasswordValue = jumpPassword.getText().toString();
                 if (!jumpPasswordValue.isEmpty()) {
                     profile.encryptedJumpPassword = KeyVault.encrypt(jumpPasswordValue.getBytes(StandardCharsets.UTF_8));
-                }
-
-                SshKey targetKey = profile.keyId == null || profile.keyId.isEmpty()
-                        ? null : SshKeyStore.get(this, profile.keyId);
-                boolean hasTargetKey = targetKey != null
-                        || (profile.keyId == null || profile.keyId.isEmpty())
-                        && profile.encryptedKey != null && !profile.encryptedKey.isEmpty();
-                boolean hasTargetPassword = profile.encryptedPassword != null && !profile.encryptedPassword.isEmpty();
-                if (!hasTargetKey && !hasTargetPassword) {
-                    throw new IllegalArgumentException("Choose a private key from the vault or enter an SSH password");
-                }
-                if (!profile.jumpHost.isEmpty()) {
-                    SshKey jumpKey = profile.jumpKeyId == null || profile.jumpKeyId.isEmpty()
-                            ? null : SshKeyStore.get(this, profile.jumpKeyId);
-                    boolean hasJumpPassword = profile.encryptedJumpPassword != null && !profile.encryptedJumpPassword.isEmpty();
-                    if (jumpKey == null && !hasJumpPassword) {
-                        throw new IllegalArgumentException("Choose a jump server key or enter its password");
-                    }
                 }
 
                 ProfileStore.save(this, profile);
