@@ -15,10 +15,12 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -310,14 +312,41 @@ public final class MainActivity extends Activity {
         jumpTitleParams.topMargin = dp(14);
         form.addView(jumpTitle, jumpTitleParams);
 
-        EditText jumpHost = input("Jump host (leave blank to connect directly)", profile.jumpHost, InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        EditText jumpPort = input("Jump SSH port", String.valueOf(profile.jumpPort), InputType.TYPE_CLASS_NUMBER);
-        EditText jumpUsername = input("Jump server username", profile.jumpUsername, InputType.TYPE_CLASS_TEXT);
-        EditText jumpPassword = input("Jump server password (blank keeps saved value)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        form.addView(jumpHost);
-        form.addView(jumpPort);
-        form.addView(jumpUsername);
-        form.addView(jumpPassword);
+        TextView jumpTitle = text("Подключаться через", 16, 0xFF152033, true);
+        LinearLayout.LayoutParams jumpTitleParams = params(-1, -2);
+        jumpTitleParams.topMargin = dp(14);
+        form.addView(jumpTitle, jumpTitleParams);
+
+        ArrayList<Profile> jumpOptions = new ArrayList<>();
+        jumpOptions.add(null);
+        String legacyJumpId = profile.jumpProfileId == null ? "" : profile.jumpProfileId;
+        List<Profile> availableHosts = ProfileStore.all(this);
+        for (Profile candidate : availableHosts) {
+            if (candidate.id.equals(profile.id)) continue;
+            if (legacyJumpId.isEmpty() && profile.jumpHost != null
+                    && candidate.host.equalsIgnoreCase(profile.jumpHost)
+                    && candidate.sshPort == profile.jumpPort
+                    && candidate.username.equals(profile.jumpUsername)) {
+                legacyJumpId = candidate.id;
+            }
+            jumpOptions.add(candidate);
+        }
+        ArrayList<String> jumpLabels = new ArrayList<>();
+        jumpLabels.add("Напрямую");
+        int jumpSelection = 0;
+        for (int i = 1; i < jumpOptions.size(); i++) {
+            Profile candidate = jumpOptions.get(i);
+            jumpLabels.add(candidate.name + " · " + candidate.username + "@" + candidate.host);
+            if (candidate.id.equals(legacyJumpId)) jumpSelection = i;
+        }
+        Spinner jumpProfile = new Spinner(this);
+        jumpProfile.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+                jumpLabels));
+        jumpProfile.setSelection(jumpSelection);
+        form.addView(jumpProfile);
+        EditText sshPassword = input("SSH password (optional; blank keeps saved value)", "",
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        form.addView(sshPassword);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(form);
@@ -337,11 +366,10 @@ public final class MainActivity extends Activity {
                 if (hostValue.isEmpty() || userValue.isEmpty()) throw new IllegalArgumentException("Host and username are required");
                 if (localPortValue < 1024) throw new IllegalArgumentException("SOCKS5 port must be 1024–65535");
 
-                String jumpHostValue = jumpHost.getText().toString().trim();
-                int jumpPortValue = parsePort(jumpPort.getText().toString(), "Jump server port");
-                String jumpUsernameValue = jumpUsername.getText().toString().trim();
-                if (!jumpHostValue.isEmpty() && jumpUsernameValue.isEmpty()) {
-                    throw new IllegalArgumentException("Enter a username for the jump server");
+                Profile selectedJump = jumpOptions.get(jumpProfile.getSelectedItemPosition());
+                String selectedJumpId = selectedJump == null ? "" : selectedJump.id;
+                if (!selectedJumpId.isEmpty() && wouldCreateCycle(profile.id, selectedJumpId)) {
+                    throw new IllegalArgumentException("This ProxyJump would create a cycle");
                 }
 
                 profile.name = name.getText().toString().trim();
@@ -350,16 +378,17 @@ public final class MainActivity extends Activity {
                 profile.username = userValue;
                 profile.sshPort = sshPortValue;
                 profile.localPort = localPortValue;
-                profile.jumpHost = jumpHostValue;
-                profile.jumpPort = jumpPortValue;
-                profile.jumpUsername = jumpUsernameValue;
+                profile.jumpProfileId = selectedJumpId;
+                // Clear inline jump data after migrating to a host reference.
+                profile.jumpHost = "";
+                profile.jumpUsername = "";
+                profile.encryptedJumpPassword = "";
+                profile.jumpKeyId = "";
+                profile.jumpFingerprint = "";
+
 
                 String password = sshPassword.getText().toString();
                 if (!password.isEmpty()) profile.encryptedPassword = KeyVault.encrypt(password.getBytes(StandardCharsets.UTF_8));
-                String jumpPasswordValue = jumpPassword.getText().toString();
-                if (!jumpPasswordValue.isEmpty()) {
-                    profile.encryptedJumpPassword = KeyVault.encrypt(jumpPasswordValue.getBytes(StandardCharsets.UTF_8));
-                }
 
                 ProfileStore.save(this, profile);
                 dialog.dismiss();
@@ -369,6 +398,18 @@ public final class MainActivity extends Activity {
             }
         }));
         dialog.show();
+    }
+
+    private boolean wouldCreateCycle(String profileId, String jumpId) {
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        String current = jumpId;
+        while (current != null && !current.isEmpty()) {
+            if (current.equals(profileId) || !seen.add(current)) return true;
+            Profile node = ProfileStore.get(this, current);
+            if (node == null) return false;
+            current = node.jumpProfileId;
+        }
+        return false;
     }
 
     private int parsePort(String value, String label) {
