@@ -33,10 +33,17 @@ final class ProfileStore {
                 p.sshPort = json.optInt("sshPort", 22);
                 p.username = json.optString("username");
                 p.localPort = json.optInt("localPort", 1080);
+                p.keyId = json.optString("keyId");
                 p.encryptedKey = json.optString("encryptedKey");
                 p.encryptedPassword = json.optString("encryptedPassword");
                 p.encryptedPassphrase = json.optString("encryptedPassphrase");
                 p.hostFingerprint = json.optString("hostFingerprint");
+                p.jumpHost = json.optString("jumpHost");
+                p.jumpPort = json.optInt("jumpPort", 22);
+                p.jumpUsername = json.optString("jumpUsername");
+                p.encryptedJumpPassword = json.optString("encryptedJumpPassword");
+                p.jumpKeyId = json.optString("jumpKeyId");
+                p.jumpFingerprint = json.optString("jumpFingerprint");
                 if (!p.id.isEmpty()) profiles.add(p);
             }
         } catch (Exception ignored) {
@@ -110,10 +117,17 @@ final class ProfileStore {
             json.put("sshPort", p.sshPort);
             json.put("username", p.username);
             json.put("localPort", p.localPort);
+            json.put("keyId", p.keyId);
             json.put("encryptedKey", p.encryptedKey);
             json.put("encryptedPassword", p.encryptedPassword);
             json.put("encryptedPassphrase", p.encryptedPassphrase);
             json.put("hostFingerprint", p.hostFingerprint);
+            json.put("jumpHost", p.jumpHost);
+            json.put("jumpPort", p.jumpPort);
+            json.put("jumpUsername", p.jumpUsername);
+            json.put("encryptedJumpPassword", p.encryptedJumpPassword);
+            json.put("jumpKeyId", p.jumpKeyId);
+            json.put("jumpFingerprint", p.jumpFingerprint);
         } catch (Exception ignored) {}
         return json;
     }
