@@ -17,6 +17,8 @@ final class Profile {
     // Encrypted per-host password and pinned SSH host key.
     String encryptedPassword = "";
     String hostFingerprint = "";
+    // Last observed host key when it did not match the trusted pin.
+    String observedFingerprint = "";
 
     // Legacy fields retained for migration from the first released schema.
     String keyId = "";
