@@ -15,6 +15,11 @@ import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -28,157 +33,144 @@ public final class SshTunnelService extends Service {
     private static final int NOTIFICATION_ID = 41;
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final List<Session> activeSessions = Collections.synchronizedList(new ArrayList<>());
     private volatile Session activeSession;
-    private volatile Session activeJumpSession;
     private volatile Socks5Proxy activeProxy;
     private volatile String activeProfileId = "";
 
-    @Override
-    public void onCreate() {
+    @Override public void onCreate() {
         super.onCreate();
         createNotificationChannel();
     }
 
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
         startInForeground("SSH tunnel", "Preparing connection…");
         String action = intent == null ? ACTION_STOP : intent.getAction();
         String profileId = intent == null ? "" : intent.getStringExtra(EXTRA_PROFILE_ID);
-
-        if (ACTION_CONNECT.equals(action)) {
-            worker.execute(() -> connect(profileId));
-        } else if (ACTION_TRUST.equals(action)) {
-            worker.execute(() -> trustAndConnect(profileId));
-        } else {
-            worker.execute(this::disconnect);
-        }
+        if (ACTION_CONNECT.equals(action)) worker.execute(() -> connect(profileId));
+        else if (ACTION_TRUST.equals(action)) worker.execute(() -> trustAndConnect(profileId));
+        else worker.execute(this::disconnect);
         return START_NOT_STICKY;
     }
 
-    private void trustAndConnect(String profileId) {
-        Profile profile = ProfileStore.get(this, profileId);
+    private void trustAndConnect(String targetId) {
         String pending = ProfileStore.pendingFingerprint(this);
-        if (profile == null || pending.isEmpty() || !profileId.equals(ProfileStore.statusProfile(this))) {
-            fail(profileId, "No pending host key confirmation");
+        if (pending == null || !pending.startsWith("NODE:")) {
+            fail(targetId, "No pending host key confirmation");
             return;
         }
-        boolean jumpKey = pending.startsWith("JUMP:");
-        String fingerprint = pending.startsWith("JUMP:") || pending.startsWith("TARGET:")
-                ? pending.substring(pending.indexOf(':') + 1) : pending;
-        if (jumpKey) profile.jumpFingerprint = fingerprint;
-        else profile.hostFingerprint = fingerprint;
-        ProfileStore.save(this, profile);
+        int split = pending.indexOf(':', 5);
+        if (split < 0) {
+            fail(targetId, "Invalid pending host key confirmation");
+            return;
+        }
+        String nodeId = pending.substring(5, split);
+        String fingerprint = pending.substring(split + 1);
+        Profile node = ProfileStore.get(this, nodeId);
+        if (node == null || !targetId.equals(ProfileStore.statusProfile(this))) {
+            fail(targetId, "The host awaiting confirmation no longer exists");
+            return;
+        }
+        node.hostFingerprint = fingerprint;
+        ProfileStore.save(this, node);
         ProfileStore.setPendingFingerprint(this, "");
-        connect(profileId);
+        connect(targetId);
     }
 
-    private void connect(String profileId) {
+    private void connect(String targetId) {
         closeActiveSession();
-        Profile profile = ProfileStore.get(this, profileId);
-        if (profile == null) {
-            fail(profileId, "Connection profile was not found");
-            return;
-        }
+        Profile target = ProfileStore.get(this, targetId);
+        if (target == null) { fail(targetId, "Connection profile was not found"); return; }
 
-        SshKey targetKey = profile.keyId == null || profile.keyId.isEmpty()
-                ? null : SshKeyStore.get(this, profile.keyId);
-        boolean legacyTargetKey = targetKey == null && (profile.keyId == null || profile.keyId.isEmpty())
-                && profile.encryptedKey != null && !profile.encryptedKey.isEmpty();
-        boolean hasTargetKey = targetKey != null || legacyTargetKey;
-        boolean hasTargetPassword = profile.encryptedPassword != null && !profile.encryptedPassword.isEmpty();
-        if (!hasTargetKey && !hasTargetPassword) {
-            fail(profileId, "Add an SSH password or select a private key");
-            return;
-        }
-
-        boolean useJump = profile.jumpHost != null && !profile.jumpHost.trim().isEmpty();
-        SshKey jumpKey = profile.jumpKeyId == null || profile.jumpKeyId.isEmpty()
-                ? null : SshKeyStore.get(this, profile.jumpKeyId);
-        boolean hasJumpPassword = profile.encryptedJumpPassword != null && !profile.encryptedJumpPassword.isEmpty();
-        if (useJump && (profile.jumpUsername == null || profile.jumpUsername.trim().isEmpty())) {
-            fail(profileId, "Enter a username for the jump server");
-            return;
-        }
-        if (useJump && jumpKey == null && !hasJumpPassword) {
-            fail(profileId, "Add a password or select a key for the jump server");
-            return;
-        }
-
-        activeProfileId = profile.id;
-        ProfileStore.setStatus(this, profile.id, "CONNECTING",
-                "Connecting to " + profile.host + (useJump ? " via " + profile.jumpHost : ""));
-        updateNotification("Connecting", profile.username + "@" + profile.host
-                + (useJump ? " via " + profile.jumpHost : ""));
-
-        Session jumpCandidate = null;
-        Session targetCandidate = null;
+        List<Profile> chain;
         try {
-            if (useJump) {
-                JSch jumpJsch = new JSch();
-                addAllVaultKeys(jumpJsch);
-                Session jumpSession = jumpJsch.getSession(
-                        profile.jumpUsername, profile.jumpHost, profile.jumpPort);
-                jumpCandidate = jumpSession;
-                if (hasJumpPassword) jumpSession.setPassword(KeyVault.decrypt(profile.encryptedJumpPassword));
-                configureAuthentication(jumpSession);
-                jumpSession.setConfig("StrictHostKeyChecking", "no");
-                jumpSession.connect(20_000);
-
-                String jumpFingerprint = fingerprint(jumpSession);
-                if (profile.jumpFingerprint == null || profile.jumpFingerprint.isEmpty()) {
-                    jumpSession.disconnect();
-                    requestTrust(profile.id, "JUMP:" + jumpFingerprint);
-                    return;
-                }
-                if (!profile.jumpFingerprint.equals(jumpFingerprint)) {
-                    jumpSession.disconnect();
-                    fail(profile.id, "Jump server host key changed. Verify it before updating the saved fingerprint.");
-                    return;
-                }
-            }
-
-            JSch targetJsch = new JSch();
-            addAllVaultKeys(targetJsch);
-            Session targetSession = targetJsch.getSession(profile.username, profile.host, profile.sshPort);
-            targetCandidate = targetSession;
-            if (hasTargetPassword) targetSession.setPassword(KeyVault.decrypt(profile.encryptedPassword));
-            configureAuthentication(targetSession);
-            if (useJump) targetSession.setProxy(new SshJumpProxy(jumpCandidate));
-            targetSession.setConfig("StrictHostKeyChecking", "no");
-            targetSession.connect(20_000);
-
-            String targetFingerprint = fingerprint(targetSession);
-            if (profile.hostFingerprint == null || profile.hostFingerprint.isEmpty()) {
-                targetSession.disconnect();
-                if (jumpCandidate != null) jumpCandidate.disconnect();
-                requestTrust(profile.id, "TARGET:" + targetFingerprint);
-                return;
-            }
-            if (!profile.hostFingerprint.equals(targetFingerprint)) {
-                targetSession.disconnect();
-                if (jumpCandidate != null) jumpCandidate.disconnect();
-                fail(profile.id, "SSH host key changed. Verify it before updating the saved fingerprint.");
-                return;
-            }
-
-            Socks5Proxy proxy = new Socks5Proxy(targetSession, profile.localPort);
-            proxy.start();
-            activeSession = targetSession;
-            activeJumpSession = jumpCandidate;
-            activeProxy = proxy;
-            ProfileStore.setStatus(this, profile.id, "CONNECTED",
-                    "SOCKS5 listening on 127.0.0.1:" + profile.localPort);
-            updateNotification("SSH tunnel connected",
-                    "SOCKS5 127.0.0.1:" + profile.localPort + " via " + profile.host);
+            chain = resolveChain(target);
         } catch (Exception e) {
-            if (targetCandidate != null) {
-                try { targetCandidate.disconnect(); } catch (Exception ignored) {}
-            }
-            if (jumpCandidate != null) {
-                try { jumpCandidate.disconnect(); } catch (Exception ignored) {}
-            }
-            fail(profile.id, readableMessage(e));
+            fail(targetId, e.getMessage());
+            return;
         }
+
+        activeProfileId = targetId;
+        ProfileStore.setStatus(this, targetId, "CONNECTING",
+                "Connecting through " + chainLabel(chain));
+        updateNotification("Connecting", chainLabel(chain));
+
+        Session previous = null;
+        try {
+            for (Profile node : chain) {
+                JSch jsch = new JSch();
+                addAllVaultKeys(jsch);
+                Session session = jsch.getSession(node.username, node.host, node.sshPort);
+                session.setConfig("PreferredAuthentications", "publickey,password");
+                session.setConfig("StrictHostKeyChecking", "no");
+                if (node.encryptedPassword != null && !node.encryptedPassword.isEmpty()) {
+                    session.setPassword(KeyVault.decrypt(node.encryptedPassword));
+                }
+                if (previous != null) session.setProxy(new SshJumpProxy(previous));
+                try {
+                    session.connect(20_000);
+                } catch (Exception e) {
+                    try { session.disconnect(); } catch (Exception ignored) {}
+                    throw new NodeException(node, "SSH authentication/connection failed", e);
+                }
+
+                String actualFingerprint = fingerprint(session);
+                if (node.hostFingerprint == null || node.hostFingerprint.isEmpty()) {
+                    try { session.disconnect(); } catch (Exception ignored) {}
+                    requestTrust(targetId, node.id, actualFingerprint);
+                    return;
+                }
+                if (!node.hostFingerprint.equals(actualFingerprint)) {
+                    try { session.disconnect(); } catch (Exception ignored) {}
+                    throw new NodeException(node, "SSH host key changed; verify it before updating the saved fingerprint", null);
+                }
+                activeSessions.add(session);
+                previous = session;
+            }
+
+            activeSession = previous;
+            Socks5Proxy proxy = new Socks5Proxy(previous, target.localPort);
+            proxy.start();
+            activeProxy = proxy;
+            ProfileStore.setStatus(this, targetId, "CONNECTED",
+                    "SOCKS5 listening on 127.0.0.1:" + target.localPort);
+            updateNotification("SSH tunnel connected",
+                    "SOCKS5 127.0.0.1:" + target.localPort + " via " + chainLabel(chain));
+        } catch (Exception e) {
+            String message = e instanceof NodeException
+                    ? ((NodeException) e).getMessage()
+                    : readableMessage(e);
+            closeActiveSession();
+            fail(targetId, message);
+        }
+    }
+
+    private List<Profile> resolveChain(Profile target) throws Exception {
+        ArrayList<Profile> reversed = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        Profile node = target;
+        while (node != null) {
+            if (!seen.add(node.id)) throw new IllegalArgumentException("ProxyJump cycle detected at " + display(node));
+            reversed.add(node);
+            String jumpId = node.jumpProfileId == null ? "" : node.jumpProfileId;
+            if (jumpId.isEmpty()) break;
+            node = ProfileStore.get(this, jumpId);
+            if (node == null) throw new IllegalArgumentException("ProxyJump host for " + display(reversed.get(reversed.size() - 1)) + " was deleted");
+            if (reversed.size() > ProfileStore.all(this).size()) throw new IllegalArgumentException("ProxyJump chain is invalid");
+        }
+        Collections.reverse(reversed);
+        return reversed;
+    }
+
+    private String chainLabel(List<Profile> chain) {
+        ArrayList<String> labels = new ArrayList<>();
+        for (Profile node : chain) labels.add(display(node));
+        return android.text.TextUtils.join(" → ", labels);
+    }
+
+    private String display(Profile node) {
+        return (node.name == null || node.name.trim().isEmpty() ? node.host : node.name)
+                + " (" + node.username + "@" + node.host + ")";
     }
 
     private void addAllVaultKeys(JSch jsch) throws Exception {
@@ -190,27 +182,17 @@ public final class SshTunnelService extends Service {
         }
     }
 
-    private void addLegacyKey(JSch jsch, Profile profile) throws Exception {
-        byte[] privateKey = KeyVault.decrypt(profile.encryptedKey);
-        byte[] passphrase = profile.encryptedPassphrase == null || profile.encryptedPassphrase.isEmpty()
-                ? null : KeyVault.decrypt(profile.encryptedPassphrase);
-        jsch.addIdentity("legacy-" + profile.id, privateKey, null, passphrase);
-    }
-
-    private void configureAuthentication(Session session) {
-        session.setConfig("PreferredAuthentications", "publickey,password");
-    }
-
     private String fingerprint(Session session) throws Exception {
-        byte[] key = Base64.decode(session.getHostKey().getKey(), Base64.DEFAULT);
-        byte[] digest = MessageDigest.getInstance("SHA-256").digest(key);
+        byte[] hostKey = Base64.decode(session.getHostKey().getKey(), Base64.DEFAULT);
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(hostKey);
         return "SHA256:" + Base64.encodeToString(digest, Base64.NO_PADDING | Base64.NO_WRAP);
     }
 
-    private void requestTrust(String profileId, String taggedFingerprint) {
-        ProfileStore.setPendingFingerprint(this, taggedFingerprint);
-        ProfileStore.setStatus(this, profileId, "NEEDS_TRUST", taggedFingerprint);
+    private void requestTrust(String targetId, String nodeId, String fingerprint) {
+        ProfileStore.setPendingFingerprint(this, "NODE:" + nodeId + ":" + fingerprint);
+        ProfileStore.setStatus(this, targetId, "NEEDS_TRUST", "NODE:" + nodeId + ":" + fingerprint);
         updateNotification("Verify SSH server", "Open the app to review its host fingerprint");
+        closeActiveSession();
         stopForeground(true);
         stopSelf();
     }
@@ -218,7 +200,7 @@ public final class SshTunnelService extends Service {
     private void disconnect() {
         closeActiveSession();
         ProfileStore.setPendingFingerprint(this, "");
-        ProfileStore.setStatus(this, activeProfileId, "IDLE", "Disconnected");
+        if (!activeProfileId.isEmpty()) ProfileStore.setStatus(this, activeProfileId, "IDLE", "Disconnected");
         stopForeground(true);
         stopSelf();
     }
@@ -227,42 +209,33 @@ public final class SshTunnelService extends Service {
         Socks5Proxy proxy = activeProxy;
         activeProxy = null;
         if (proxy != null) proxy.stop();
-
-        Session target = activeSession;
         activeSession = null;
-        if (target != null) {
-            try { target.disconnect(); } catch (Exception ignored) {}
-        }
-
-        Session jump = activeJumpSession;
-        activeJumpSession = null;
-        if (jump != null) {
-            try { jump.disconnect(); } catch (Exception ignored) {}
+        synchronized (activeSessions) {
+            for (int i = activeSessions.size() - 1; i >= 0; i--) {
+                try { activeSessions.get(i).disconnect(); } catch (Exception ignored) {}
+            }
+            activeSessions.clear();
         }
     }
 
     private void fail(String profileId, String message) {
         closeActiveSession();
-        ProfileStore.setStatus(this, profileId, "ERROR", message);
-        updateNotification("SSH tunnel stopped", message);
+        ProfileStore.setStatus(this, profileId, "ERROR", message == null ? "Connection failed" : message);
+        updateNotification("SSH tunnel stopped", message == null ? "Connection failed" : message);
         stopForeground(true);
         stopSelf();
     }
 
     private String readableMessage(Exception e) {
         String message = e.getMessage();
-        return message == null || message.trim().isEmpty()
-                ? e.getClass().getSimpleName() : message;
+        return message == null || message.trim().isEmpty() ? e.getClass().getSimpleName() : message;
     }
 
     private void startInForeground(String title, String text) {
         Notification notification = buildNotification(title, text);
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIFICATION_ID, notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
-        }
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+        } else startForeground(NOTIFICATION_ID, notification);
     }
 
     private void updateNotification(String title, String text) {
@@ -272,37 +245,47 @@ public final class SshTunnelService extends Service {
 
     private Notification buildNotification(String title, String text) {
         Intent open = new Intent(this, MainActivity.class);
-        PendingIntent contentIntent = PendingIntent.getActivity(
-                this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        return new Notification.Builder(this, CHANNEL_ID)
+        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Intent stop = new Intent(this, SshTunnelService.class);
+        stop.setAction(ACTION_STOP);
+        stop.putExtra(EXTRA_PROFILE_ID, activeProfileId);
+        PendingIntent stopIntent = PendingIntent.getService(this, 1, stop,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-                .setContentTitle(title)
-                .setContentText(text)
+                .setContentTitle(title).setContentText(text)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(contentIntent)
-                .setOngoing("SSH tunnel connected".equals(title) || "Connecting".equals(title))
-                .build();
+                .setOngoing("SSH tunnel connected".equals(title) || "Connecting".equals(title));
+        if ("SSH tunnel connected".equals(title) || "Connecting".equals(title)) {
+            builder.addAction(new Notification.Action.Builder(null, "Disconnect", stopIntent).build());
+        }
+        return builder.build();
     }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID, "SSH tunnel", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "SSH tunnel", NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Shows the state of the SSH SOCKS5 tunnel");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
-    @Override
-    public void onDestroy() {
+    @Override public void onDestroy() {
         closeActiveSession();
         worker.shutdownNow();
         super.onDestroy();
     }
 
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    private static final class NodeException extends Exception {
+        NodeException(Profile node, String reason, Throwable cause) {
+            super((node.name == null || node.name.trim().isEmpty() ? node.host : node.name)
+                    + " (" + node.username + "@" + node.host + "): " + reason
+                    + (cause == null || cause.getMessage() == null ? "" : " — " + cause.getMessage()), cause);
+        }
     }
 }
