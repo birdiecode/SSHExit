@@ -20,9 +20,12 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.FrameLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.google.android.material.bottomnavigation.BottomNavigationView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -41,6 +44,9 @@ public final class MainActivity extends Activity {
     private final Map<String, Button> rowActions = new HashMap<>();
 
     private LinearLayout list;
+    private LinearLayout keyList;
+    private FrameLayout contentHost;
+    private BottomNavigationView bottomNavigation;
     private TextView overallStatus;
     private byte[] pendingVaultKey;
     private String pendingVaultKeyName = "";
@@ -56,8 +62,6 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().setStatusBarColor(0xFFF5F7FA);
-        getWindow().setNavigationBarColor(0xFFF5F7FA);
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
@@ -65,51 +69,81 @@ public final class MainActivity extends Activity {
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(0xFFF5F7FA);
-        page.setPadding(dp(20), dp(20), dp(20), dp(12));
+        page.setPadding(dp(16), dp(16), dp(16), 0);
 
-        TextView title = text("SSH2SOCKS", 28, 0xFF152033, true);
+        TextView title = text("SSH2SOCKS", 26, 0xFF152033, true);
         page.addView(title);
+        TextView subtitle = text("SSH-туннели и локальный SOCKS5", 14, 0xFF65728A, false);
+        page.addView(subtitle);
 
-        TextView subtitle = text("SSH connection profiles and a local SOCKS5 proxy", 14, 0xFF65728A, false);
-        LinearLayout.LayoutParams subtitleParams = params(-1, -2);
-        subtitleParams.topMargin = dp(5);
-        page.addView(subtitle, subtitleParams);
-
-        overallStatus = text("No active tunnel", 14, 0xFF33415C, true);
+        overallStatus = text("Отключено", 14, 0xFF33415C, true);
         LinearLayout.LayoutParams statusParams = params(-1, -2);
-        statusParams.topMargin = dp(16);
+        statusParams.topMargin = dp(12);
         page.addView(overallStatus, statusParams);
 
-        Button keyVault = new Button(this);
-        keyVault.setText("SSH keys");
-        keyVault.setOnClickListener(v -> showKeyManager());
-        LinearLayout.LayoutParams vaultParams = params(-1, -2);
-        vaultParams.topMargin = dp(10);
-        page.addView(keyVault, vaultParams);
+        contentHost = new FrameLayout(this);
+        LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, 0, 1f);
+        contentParams.topMargin = dp(8);
+        page.addView(contentHost, contentParams);
 
+        LinearLayout hostsPage = new LinearLayout(this);
+        hostsPage.setOrientation(LinearLayout.VERTICAL);
         Button add = new Button(this);
-        add.setText("Add connection");
+        add.setText("Добавить хост");
         add.setOnClickListener(v -> showEditor(null));
-        LinearLayout.LayoutParams addParams = params(-1, -2);
-        addParams.topMargin = dp(12);
-        page.addView(add, addParams);
-
-        ScrollView scroll = new ScrollView(this);
+        hostsPage.addView(add);
+        ScrollView hostsScroll = new ScrollView(this);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        scroll.addView(list);
-        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(-1, 0, 1f);
-        scrollParams.topMargin = dp(12);
-        page.addView(scroll, scrollParams);
+        hostsScroll.addView(list);
+        hostsPage.addView(hostsScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        TextView help = text("SOCKS5 доступен на этом устройстве: 127.0.0.1:<порт>", 12, 0xFF65728A, false);
+        hostsPage.addView(help);
+        contentHost.addView(hostsPage);
 
-        TextView help = text("The proxy listens only on this phone at 127.0.0.1. Set a SOCKS5-aware app to the shown port.", 12, 0xFF65728A, false);
-        LinearLayout.LayoutParams helpParams = params(-1, -2);
-        helpParams.topMargin = dp(8);
-        page.addView(help, helpParams);
+        LinearLayout keysPage = new LinearLayout(this);
+        keysPage.setOrientation(LinearLayout.VERTICAL);
+        TextView keyHint = text("Общее хранилище SSH-ключей. Ключи предлагаются каждому узлу цепочки.", 13, 0xFF65728A, false);
+        keysPage.addView(keyHint);
+        Button importKey = new Button(this);
+        importKey.setText("Импортировать приватный ключ");
+        importKey.setOnClickListener(v -> launchKeyPicker());
+        keysPage.addView(importKey);
+        ScrollView keysScroll = new ScrollView(this);
+        keyList = new LinearLayout(this);
+        keyList.setOrientation(LinearLayout.VERTICAL);
+        keysScroll.addView(keyList);
+        keysPage.addView(keysScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        contentHost.addView(keysPage);
+        keysPage.setVisibility(View.GONE);
+
+        bottomNavigation = new BottomNavigationView(this);
+        bottomNavigation.getMenu().add(0, 1, 0, "Хосты").setIcon(android.R.drawable.ic_menu_agenda);
+        bottomNavigation.getMenu().add(0, 2, 1, "Ключи").setIcon(android.R.drawable.ic_lock_lock);
+        bottomNavigation.setLabelVisibilityMode(BottomNavigationView.LABEL_VISIBILITY_LABELED);
+        bottomNavigation.setOnItemSelectedListener(item -> {
+            switchTab(item.getItemId());
+            return true;
+        });
+        page.addView(bottomNavigation, params(-1, -2));
 
         setContentView(page);
         renderProfiles();
+        renderKeyList();
+    }
+
+    private void switchTab(int tabId) {
+        if (contentHost == null || contentHost.getChildCount() < 2) return;
+        contentHost.getChildAt(0).setVisibility(tabId == 1 ? View.VISIBLE : View.GONE);
+        contentHost.getChildAt(1).setVisibility(tabId == 2 ? View.VISIBLE : View.GONE);
+        if (tabId == 2) renderKeyList();
+    }
+
+    private void launchKeyPicker() {
+        Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        picker.addCategory(Intent.CATEGORY_OPENABLE);
+        picker.setType("*/*");
+        startActivityForResult(picker, REQUEST_KEY);
     }
 
     @Override protected void onResume() {
