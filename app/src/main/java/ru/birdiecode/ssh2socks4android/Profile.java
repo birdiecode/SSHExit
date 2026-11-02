@@ -10,6 +10,7 @@ final class Profile {
     String username = "";
     int localPort = 1080;
     String encryptedKey = "";
+    String encryptedPassword = "";
     String encryptedPassphrase = "";
     String hostFingerprint = "";
 
