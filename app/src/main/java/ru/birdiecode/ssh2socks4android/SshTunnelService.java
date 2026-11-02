@@ -140,6 +140,11 @@ public final class SshTunnelService extends Service {
                 } catch (Exception e) {
                     try { session.disconnect(); } catch (Exception ignored) {}
                     String offered = pinning.getOfferedFingerprint();
+                    if (!offered.isEmpty() && offered.equals(node.hostFingerprint)
+                            && node.observedFingerprint != null && !node.observedFingerprint.isEmpty()) {
+                        node.observedFingerprint = "";
+                        ProfileStore.save(this, node);
+                    }
                     if (!offered.isEmpty() && (node.hostFingerprint == null || node.hostFingerprint.isEmpty())) {
                         requestTrust(targetId, node.id, offered);
                         return;
