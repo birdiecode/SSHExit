@@ -90,6 +90,7 @@ public final class SshTunnelService extends Service {
             return;
         }
         node.hostFingerprint = fingerprint;
+        node.observedFingerprint = "";
         ProfileStore.save(this, node);
         ProfileStore.setPendingFingerprint(this, "");
         connect(targetId);
@@ -144,7 +145,11 @@ public final class SshTunnelService extends Service {
                         return;
                     }
                     if (!offered.isEmpty()) {
-                        throw new NodeException(node, "SSH host key changed; verify it before updating the saved fingerprint", null);
+                        node.observedFingerprint = offered;
+                        ProfileStore.save(this, node);
+                        throw new NodeException(node,
+                                "Проверка fingerprint не пройдена. Доверенный: "
+                                        + node.hostFingerprint + " · получен: " + offered, null);
                     }
                     if (isAuthenticationFailure(e)) {
                         if (promptedPassword != null) {
@@ -157,6 +162,10 @@ public final class SshTunnelService extends Service {
                     throw new NodeException(node, "SSH connection failed", e);
                 }
                 activeSessions.add(session);
+                if (node.observedFingerprint != null && !node.observedFingerprint.isEmpty()) {
+                    node.observedFingerprint = "";
+                    ProfileStore.save(this, node);
+                }
                 if (promptedPassword != null) {
                     if (!hasSavedPassword) {
                         node.encryptedPassword = KeyVault.encrypt(promptedPassword.getBytes(StandardCharsets.UTF_8));
