@@ -15,7 +15,10 @@ import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 
 import java.security.MessageDigest;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -28,6 +31,9 @@ public final class SshTunnelService extends Service {
     static final String ACTION_TRUST = "ru.birdiecode.ssh2socks4android.TRUST";
     static final String ACTION_STOP = "ru.birdiecode.ssh2socks4android.STOP";
     static final String EXTRA_PROFILE_ID = "profile_id";
+    static final String ACTION_PASSWORD = "ru.birdiecode.ssh2socks4android.PASSWORD";
+    static final String EXTRA_NODE_ID = "node_id";
+    static final String EXTRA_PASSWORD = "password";
 
     private static final String CHANNEL_ID = "ssh_tunnel";
     private static final int NOTIFICATION_ID = 41;
@@ -37,6 +43,7 @@ public final class SshTunnelService extends Service {
     private volatile Session activeSession;
     private volatile Socks5Proxy activeProxy;
     private volatile String activeProfileId = "";
+    private final Map<String, String> pendingPasswords = new HashMap<>();
 
     @Override public void onCreate() {
         super.onCreate();
@@ -49,7 +56,18 @@ public final class SshTunnelService extends Service {
         String profileId = intent == null ? "" : intent.getStringExtra(EXTRA_PROFILE_ID);
         if (ACTION_CONNECT.equals(action)) worker.execute(() -> connect(profileId));
         else if (ACTION_TRUST.equals(action)) worker.execute(() -> trustAndConnect(profileId));
-        else worker.execute(this::disconnect);
+        else if (ACTION_PASSWORD.equals(action)) {
+            String nodeId = intent == null ? "" : intent.getStringExtra(EXTRA_NODE_ID);
+            String password = intent == null ? "" : intent.getStringExtra(EXTRA_PASSWORD);
+            worker.execute(() -> {
+                if (nodeId == null || nodeId.isEmpty() || password == null || password.isEmpty()) {
+                    fail(profileId, "Пароль не задан");
+                    return;
+                }
+                pendingPasswords.put(nodeId, password);
+                connect(profileId);
+            });
+        } else worker.execute(this::disconnect);
         return START_NOT_STICKY;
     }
 
@@ -103,10 +121,17 @@ public final class SshTunnelService extends Service {
                 PinnedHostKeyRepository pinning = new PinnedHostKeyRepository(node.hostFingerprint);
                 jsch.setHostKeyRepository(pinning);
                 Session session = jsch.getSession(node.username, node.host, node.sshPort);
-                session.setConfig("PreferredAuthentications", "publickey,password");
                 session.setConfig("StrictHostKeyChecking", "yes");
-                if (node.encryptedPassword != null && !node.encryptedPassword.isEmpty()) {
+                String promptedPassword = pendingPasswords.get(node.id);
+                boolean hasSavedPassword = node.encryptedPassword != null && !node.encryptedPassword.isEmpty();
+                if (promptedPassword != null) {
+                    session.setPassword(promptedPassword.getBytes(StandardCharsets.UTF_8));
+                    session.setConfig("PreferredAuthentications", "password");
+                } else if (hasSavedPassword) {
                     session.setPassword(KeyVault.decrypt(node.encryptedPassword));
+                    session.setConfig("PreferredAuthentications", "publickey,password");
+                } else {
+                    session.setConfig("PreferredAuthentications", "publickey");
                 }
                 if (previous != null) session.setProxy(new SshJumpProxy(previous));
                 try {
@@ -121,9 +146,24 @@ public final class SshTunnelService extends Service {
                     if (!offered.isEmpty()) {
                         throw new NodeException(node, "SSH host key changed; verify it before updating the saved fingerprint", null);
                     }
-                    throw new NodeException(node, "SSH authentication/connection failed", e);
+                    if (isAuthenticationFailure(e)) {
+                        if (promptedPassword != null) {
+                            pendingPasswords.remove(node.id);
+                            throw new NodeException(node, "Пароль отклонён", null);
+                        }
+                        requestPassword(targetId, node);
+                        return;
+                    }
+                    throw new NodeException(node, "SSH connection failed", e);
                 }
                 activeSessions.add(session);
+                if (promptedPassword != null) {
+                    if (!hasSavedPassword) {
+                        node.encryptedPassword = KeyVault.encrypt(promptedPassword.getBytes(StandardCharsets.UTF_8));
+                        ProfileStore.save(this, node);
+                    }
+                    pendingPasswords.remove(node.id);
+                }
                 previous = session;
             }
 
@@ -172,6 +212,22 @@ public final class SshTunnelService extends Service {
                 + " (" + node.username + "@" + node.host + ")";
     }
 
+    private boolean isAuthenticationFailure(Exception error) {
+        String message = error.getMessage();
+        if (message == null) return false;
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("auth fail") || lower.contains("authentication failed")
+                || lower.contains("auth cancel") || lower.contains("no more authentication methods");
+    }
+
+    private void requestPassword(String targetId, Profile node) {
+        activeProfileId = targetId;
+        closeActiveSession();
+        ProfileStore.setStatus(this, targetId, "NEEDS_PASSWORD", "NODE:" + node.id);
+        updateNotification("SSH password required", "Enter password for " + node.username + "@" + node.host);
+        // Keep the foreground service alive while the activity asks for the password.
+    }
+
     private void addAllVaultKeys(JSch jsch) throws Exception {
         for (SshKey key : SshKeyStore.all(this)) {
             byte[] privateKey = KeyVault.decrypt(key.encryptedPrivateKey);
@@ -192,6 +248,7 @@ public final class SshTunnelService extends Service {
 
     private void disconnect() {
         closeActiveSession();
+        pendingPasswords.clear();
         ProfileStore.setPendingFingerprint(this, "");
         if (!activeProfileId.isEmpty()) ProfileStore.setStatus(this, activeProfileId, "IDLE", "Disconnected");
         stopForeground(true);
@@ -213,6 +270,7 @@ public final class SshTunnelService extends Service {
 
     private void fail(String profileId, String message) {
         closeActiveSession();
+        pendingPasswords.clear();
         ProfileStore.setStatus(this, profileId, "ERROR", message == null ? "Connection failed" : message);
         updateNotification("SSH tunnel stopped", message == null ? "Connection failed" : message);
         stopForeground(true);
