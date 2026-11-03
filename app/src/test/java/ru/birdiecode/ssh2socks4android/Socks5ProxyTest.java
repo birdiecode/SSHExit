@@ -12,7 +12,9 @@ public class Socks5ProxyTest {
         int port;
         try (ServerSocket reserve = new ServerSocket(0)) { port = reserve.getLocalPort(); }
         Socks5Proxy proxy = new Socks5Proxy(new GreetingTestSession(), port);
+        assertFalse(proxy.isRunning());
         proxy.start();
+        assertTrue(proxy.isRunning());
         try (Socket client = new Socket("127.0.0.1", port)) {
             client.setSoTimeout(3000);
             DataInputStream input = new DataInputStream(client.getInputStream());
@@ -29,6 +31,7 @@ public class Socks5ProxyTest {
             byte[] echoed = new byte[payload.length]; input.readFully(echoed);
             assertArrayEquals(payload, echoed);
         } finally { proxy.stop(); }
+        assertFalse(proxy.isRunning());
         try (ServerSocket rebound = new ServerSocket()) {
             rebound.setReuseAddress(true);
             rebound.bind(new InetSocketAddress("127.0.0.1", port));
