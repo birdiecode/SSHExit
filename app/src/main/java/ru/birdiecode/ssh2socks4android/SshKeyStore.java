@@ -14,6 +14,7 @@ final class SshKeyStore {
     private static final String KEYS = "keys";
 
     static synchronized List<SshKey> all(Context context) {
+        migrateLegacyKeys(context);
         ArrayList<SshKey> keys = new ArrayList<>();
         try {
             JSONArray array = new JSONArray(prefs(context).getString(KEYS, "[]"));
@@ -64,6 +65,63 @@ final class SshKeyStore {
         JSONArray array = new JSONArray();
         for (SshKey key : keys) if (!key.id.equals(id)) array.put(toJson(key));
         prefs(context).edit().putString(KEYS, array.toString()).apply();
+    }
+
+    /** Moves encrypted inline keys from old host profiles into the shared vault once. */
+    private static synchronized void migrateLegacyKeys(Context context) {
+        SharedPreferences preferences = prefs(context);
+        final String migratedFlag = "legacy_profile_keys_migrated_v1";
+        if (preferences.getBoolean(migratedFlag, false)) return;
+        try {
+            List<SshKey> keys = new ArrayList<>();
+            JSONArray savedKeys = new JSONArray(preferences.getString(KEYS, "[]"));
+            for (int i = 0; i < savedKeys.length(); i++) {
+                JSONObject json = savedKeys.optJSONObject(i);
+                if (json == null) continue;
+                SshKey key = new SshKey();
+                key.id = json.optString("id");
+                key.name = json.optString("name");
+                key.encryptedPrivateKey = json.optString("encryptedPrivateKey");
+                key.encryptedPassphrase = json.optString("encryptedPassphrase");
+                if (!key.id.isEmpty()) keys.add(key);
+            }
+
+            boolean keysChanged = false;
+            List<Profile> profiles = ProfileStore.all(context);
+            List<Profile> changedProfiles = new ArrayList<>();
+            for (Profile profile : profiles) {
+                if (profile.encryptedKey == null || profile.encryptedKey.isEmpty()) continue;
+                boolean alreadyPresent = false;
+                for (SshKey existing : keys) {
+                    if (profile.encryptedKey.equals(existing.encryptedPrivateKey)) {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+                if (!alreadyPresent) {
+                    SshKey migrated = new SshKey(
+                            (profile.name == null || profile.name.trim().isEmpty()
+                                    ? "SSH" : profile.name) + " — импортированный ключ",
+                            profile.encryptedKey,
+                            profile.encryptedPassphrase == null ? "" : profile.encryptedPassphrase);
+                    keys.add(migrated);
+                    keysChanged = true;
+                }
+                profile.encryptedKey = "";
+                profile.encryptedPassphrase = "";
+                profile.keyId = "";
+                changedProfiles.add(profile);
+            }
+            if (keysChanged) {
+                JSONArray array = new JSONArray();
+                for (SshKey key : keys) array.put(toJson(key));
+                preferences.edit().putString(KEYS, array.toString()).apply();
+            }
+            for (Profile profile : changedProfiles) ProfileStore.save(context, profile);
+            preferences.edit().putBoolean(migratedFlag, true).apply();
+        } catch (Exception ignored) {
+            // Leave the migration flag unset so the next launch can retry without data loss.
+        }
     }
 
     private static JSONObject toJson(SshKey key) {

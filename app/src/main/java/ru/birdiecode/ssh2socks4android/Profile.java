@@ -2,6 +2,7 @@ package ru.birdiecode.ssh2socks4android;
 
 import java.util.UUID;
 
+/** A reusable SSH host. Hosts may be targets or intermediate ProxyJump nodes. */
 final class Profile {
     String id = UUID.randomUUID().toString();
     String name = "";
@@ -9,11 +10,20 @@ final class Profile {
     int sshPort = 22;
     String username = "";
     int localPort = 1080;
+
+    // New graph-based routing. Empty means direct connection.
+    String jumpProfileId = "";
+
+    // Encrypted per-host password and pinned SSH host key.
+    String encryptedPassword = "";
+    String hostFingerprint = "";
+    // Last observed host key when it did not match the trusted pin.
+    String observedFingerprint = "";
+
+    // Legacy fields retained for migration from the first released schema.
     String keyId = "";
     String encryptedKey = "";
-    String encryptedPassword = "";
     String encryptedPassphrase = "";
-    String hostFingerprint = "";
     String jumpHost = "";
     int jumpPort = 22;
     String jumpUsername = "";

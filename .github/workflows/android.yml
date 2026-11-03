@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
 
+# Build and upload the debug APK; screenshot capture is intentionally disabled.
 jobs:
   build:
     name: Build debug APK
@@ -43,3 +44,4 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
