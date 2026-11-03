@@ -67,6 +67,18 @@ jobs:
           test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret."; exit 1; }
           gradle --no-daemon assembleDebug
 
+      - name: Verify SSHExit application identity
+        run: |
+          BADGING="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk)"
+          case "$BADGING" in
+            *"package: name='ru.birdiecode.sshexit'"*) ;;
+            *) echo "Unexpected application ID"; exit 1 ;;
+          esac
+          case "$BADGING" in
+            *"application-label:'SSHExit'"*) ;;
+            *) echo "Unexpected application label"; exit 1 ;;
+          esac
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
