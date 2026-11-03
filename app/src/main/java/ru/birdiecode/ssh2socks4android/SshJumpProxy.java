@@ -27,7 +27,16 @@ final class SshJumpProxy implements Proxy {
         channel.setPort(port);
         channel.setOrgIPAddress("127.0.0.1");
         channel.setOrgPort(0);
-        channel.connect(timeout);
+        try {
+            channel.connect(timeout);
+        } catch (Exception e) {
+            try { channel.disconnect(); } catch (Exception ignored) {}
+            String target = host != null && host.contains(":")
+                    && !(host.startsWith("[") && host.endsWith("]")) ? "[" + host + "]" : host;
+            throw new java.io.IOException("ProxyJump server could not open a TCP forwarding channel to "
+                    + target + ":" + port
+                    + ". Check target reachability from the jump server and its TCP forwarding policy.", e);
+        }
         input = channel.getInputStream();
         output = channel.getOutputStream();
     }
