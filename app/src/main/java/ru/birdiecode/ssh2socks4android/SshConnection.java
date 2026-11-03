@@ -57,12 +57,14 @@ final class SshConnection {
     final String connectionId = java.util.UUID.randomUUID().toString();
     volatile String state = "CONNECTING";
     private volatile boolean cancelled;
+    private final ConnectionStateMachine lifecycle = new ConnectionStateMachine();
 
     SshConnection(VpnService service, Host host, String profileId) {
         this.context = service;
         this.service = service;
         this.host = host;
         this.activeProfileId = profileId;
+        lifecycle.transition(ConnectionStateMachine.State.CONNECTING);
         worker.scheduleWithFixedDelay(this::checkHealth, 2, 2, java.util.concurrent.TimeUnit.SECONDS);
     }
     String profileId() { return activeProfileId; }
@@ -109,6 +111,8 @@ final class SshConnection {
     }
     private synchronized void setStatus(String profileId, String state, String detail) {
         if (!host.isCurrent(this) || (cancelled && !"IDLE".equals(state))) return;
+        if ("IDLE".equals(state)) lifecycle.disconnect();
+        else lifecycle.transition(ConnectionStateMachine.State.valueOf(state));
         this.state = state;
         if (events.size() == 64) events.removeFirst();
         // Deliberately record states only: exceptions may contain server-controlled text.
@@ -284,7 +288,11 @@ final class SshConnection {
                     ? ((NodeException) e).getMessage()
                     : readableMessage(e);
             closeActiveSession();
-            if (!cancelled) fail(targetId, message);
+            if (!cancelled) {
+                if (retryAttempt > 0 && !message.toLowerCase(Locale.ROOT).contains("fingerprint")
+                        && !isAuthenticationFailure(e)) retryOrFail(message);
+                else fail(targetId, message);
+            }
         }
     }
 
