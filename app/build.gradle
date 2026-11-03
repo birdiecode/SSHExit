@@ -37,6 +37,14 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Trusted CI builds can sign debug APKs with the same key as releases.
+            // Without signing secrets (for example, pull request builds), Android uses
+            // its standard debug key.
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
+        }
         release {
             if (releaseSigningConfigured) {
                 signingConfig signingConfigs.release
