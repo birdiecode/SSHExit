@@ -80,7 +80,7 @@ public final class OpenSshTunChannel extends ChannelSession {
         }
         if (thread != null) return;
         Session owner = getSession();
-        thread = new Thread(this, "OpenSSH TUN channel " + owner.getHost());
+        thread = new Thread(() -> OpenSshTunChannel.this.run(), "OpenSSH TUN channel " + owner.getHost());
         thread.setDaemon(true);
         thread.start();
     }
