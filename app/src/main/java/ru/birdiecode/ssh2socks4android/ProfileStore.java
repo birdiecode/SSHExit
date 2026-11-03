@@ -159,10 +159,29 @@ final class ProfileStore {
 
     static synchronized void setStatus(Context context, String profileId, String status, String detail) {
         prefs(context).edit()
+                .putString("status." + profileId, status == null ? "IDLE" : status)
+                .putString("detail." + profileId, detail == null ? "" : detail)
                 .putString(STATUS_PROFILE, profileId == null ? "" : profileId)
                 .putString(STATUS, status == null ? "IDLE" : status)
                 .putString(STATUS_DETAIL, detail == null ? "" : detail)
                 .apply();
+    }
+
+    static String status(Context context, String profileId) {
+        return prefs(context).getString("status." + profileId, "IDLE");
+    }
+
+    static String statusDetail(Context context, String profileId) {
+        return prefs(context).getString("detail." + profileId, "");
+    }
+
+    static synchronized void resetConnectionStatuses(Context context) {
+        SharedPreferences.Editor editor = prefs(context).edit();
+        for (String key : prefs(context).getAll().keySet()) {
+            if (key.startsWith("status.") || key.startsWith("detail.")) editor.remove(key);
+        }
+        editor.putString(STATUS, "IDLE").putString(STATUS_PROFILE, "")
+                .putString(STATUS_DETAIL, "").putString(PENDING_FINGERPRINT, "").apply();
     }
 
     static String status(Context context) {
