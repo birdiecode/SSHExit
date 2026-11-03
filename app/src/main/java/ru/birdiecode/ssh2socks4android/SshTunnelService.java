@@ -335,7 +335,7 @@ public final class SshTunnelService extends VpnService {
 
     private void startServerTunConfig(Session endpoint, Profile profile, int mtu, int unit) throws Exception {
         String interfaceName = "tun" + unit;
-        String table = "ssh2socks_" + shortProfileToken(profile.id);
+        String table = "ssh2socks_" + shortProfileToken(java.util.UUID.randomUUID().toString());
         activeVpnTable = table;
         String[] ipv6 = vpnIpv6Addresses(profile);
         String script = ServerTunConfiguration.build(profile, interfaceName, table, mtu, ipv6);
