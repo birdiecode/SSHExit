@@ -22,8 +22,9 @@ final class ServerTunConfiguration {
                 .append("command -v ip >/dev/null 2>&1 || { echo 'missing ip command'; exit 20; }\n")
                 .append("command -v nft >/dev/null 2>&1 || { echo 'missing nft command'; exit 21; }\n")
                 .append("ip link show dev \"$IF\" >/dev/null 2>&1 || { echo 'sshd did not create requested TUN interface'; exit 22; }\n");
-        script.append("OLD4=1\nOLD6=1\ncleanup(){\n")
-                .append("  nft delete table inet \"$TABLE\" >/dev/null 2>&1 || true\n");
+        script.append("nft list table inet \"$TABLE\" >/dev/null 2>&1 && { echo 'server resource collision'; exit 24; }\n")
+                .append("OWN_TABLE=0\nOLD4=1\nOLD6=1\ncleanup(){\n")
+                .append("  if [ \"$OWN_TABLE\" = 1 ]; then nft delete table inet \"$TABLE\" >/dev/null 2>&1 || true; fi\n");
         if (profile.vpnIpv4) {
             script.append("  ip address del ").append(VPN_IPV4_SERVER).append(" peer ").append(VPN_IPV4_CLIENT)
                     .append(" dev \"$IF\" >/dev/null 2>&1 || true\n")
@@ -65,10 +66,9 @@ final class ServerTunConfiguration {
                     .append("add chain inet $TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }\n")
                     .append("add rule inet $TABLE postrouting oifname \"$WAN\" ip saddr ").append(VPN_IPV4_CLIENT)
                     .append(" masquerade\n")
-                    .append("EOF\n");
+                    .append("EOF\nOWN_TABLE=1\n");
         } else {
-            script.append("nft delete table inet \"$TABLE\" >/dev/null 2>&1 || true\n")
-                    .append("nft add table inet \"$TABLE\"\n");
+            script.append("nft add table inet \"$TABLE\"\nOWN_TABLE=1\n");
         }
         if (profile.vpnIpv6) {
             script.append("nft -f - <<EOF\n")
