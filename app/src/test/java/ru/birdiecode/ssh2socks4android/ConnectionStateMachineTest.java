@@ -14,7 +14,7 @@ public class ConnectionStateMachineTest {
     @Test public void trustRoundTripThenVpnSetup() {
         ConnectionStateMachine a = new ConnectionStateMachine();
         a.transition(CONNECTING); a.transition(AUTHENTICATING); a.transition(NEEDS_TRUST);
-        a.transition(CONNECTING); a.transition(AUTHENTICATING); a.transition(PREPARING_TUN);
+        a.transition(CONNECTING); a.transition(AUTHENTICATING); a.transition(NEEDS_SERVER_CONFIG); a.transition(PREPARING_TUN);
         a.transition(CONFIGURING_SERVER); a.transition(CONNECTED);
         assertEquals(CONNECTED, a.get());
     }
@@ -36,6 +36,7 @@ public class ConnectionStateMachineTest {
             {CONNECTING, AUTHENTICATING},
             {CONNECTING, AUTHENTICATING, NEEDS_PASSWORD},
             {CONNECTING, AUTHENTICATING, NEEDS_TRUST},
+            {CONNECTING, AUTHENTICATING, NEEDS_SERVER_CONFIG},
             {CONNECTING, AUTHENTICATING, PREPARING_TUN},
             {CONNECTING, AUTHENTICATING, PREPARING_TUN, CONFIGURING_SERVER}
         };
@@ -55,6 +56,18 @@ public class ConnectionStateMachineTest {
         machine.transition(AUTHENTICATING);
         machine.transition(RECONNECTING);
         assertEquals(RECONNECTING, machine.get());
+    }
+
+    @Test public void serverConfirmationCannotSkipTunPreparation() {
+        ConnectionStateMachine machine = new ConnectionStateMachine();
+        machine.transition(CONNECTING); machine.transition(AUTHENTICATING);
+        machine.transition(NEEDS_SERVER_CONFIG);
+        try { machine.transition(CONNECTED); fail("Skipped confirmed server setup"); }
+        catch (IllegalStateException expected) { assertEquals(NEEDS_SERVER_CONFIG, machine.get()); }
+        machine.transition(PREPARING_TUN);
+        machine.transition(CONFIGURING_SERVER);
+        machine.transition(CONNECTED);
+        assertEquals(CONNECTED, machine.get());
     }
 
     private ConnectionStateMachine connected() {

@@ -81,6 +81,7 @@ final class SshConnection {
     boolean usesVpn() { return vpnRequested; }
     void shutdown() {
         if (!shutdownRequested.compareAndSet(false, true)) return;
+        if ("NEEDS_SERVER_CONFIG".equals(state)) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Пользователь отменил серверный план; настройки не применялись");
         cancelled = true;
         setStatus(activeProfileId, "IDLE", "Disconnected");
         worker.shutdownNow();
@@ -161,6 +162,21 @@ final class SshConnection {
     private volatile ParcelFileDescriptor vpnInterface;
     private volatile OpenSshTunChannel activeTun;
     private volatile ChannelExec serverConfigChannel;
+    private volatile OutputStream serverConfigControl;
+    private volatile Thread serverOutputThread;
+    private static final class ServerRun {
+        final Profile profile;
+        final String interfaceName, table;
+        final String[] ipv6;
+        volatile boolean cleanupConfirmed;
+        ServerRun(Profile profile, String interfaceName, String table, String[] ipv6) {
+            this.profile = profile; this.interfaceName = interfaceName; this.table = table;
+            this.ipv6 = ipv6.clone();
+        }
+    }
+    private volatile ServerRun serverRun;
+    private String pendingServerRequest = "";
+
     private volatile int activeTunUnit = -1;
     private volatile String activeVpnTable = "";
     private volatile int previousIpv4Forwarding = -1;
@@ -297,6 +313,34 @@ final class SshConnection {
 
             checkCancelled();
             activeSession = previous;
+            if (vpnMode) {
+                requestServerPlan(target, previous);
+                return;
+            }
+            completeConnection(target);
+        } catch (Exception e) {
+            AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Тип исключения: " + e.getClass().getSimpleName());
+            String message = e instanceof NodeException
+                    ? ((NodeException) e).getMessage()
+                    : readableMessage(e);
+            closeActiveSession();
+            if (!cancelled) {
+                if (!SshTransportSocketFactory.isProtectionFailure(e)
+                        && e instanceof NodeException && e.getCause() != null
+                        && !message.toLowerCase(Locale.ROOT).contains("fingerprint")
+                        && !isAuthenticationFailure(e)) retryOrFail(message);
+                else fail(targetId, message);
+            }
+        }
+    }
+
+
+    private void completeConnection(Profile target) throws Exception {
+        String targetId = activeProfileId;
+        List<Profile> chain = resolveChain(target);
+        boolean vpnMode = !"SOCKS5".equals(target.connectionMode);
+        boolean socksMode = !"VPN".equals(target.connectionMode);
+        Session previous = activeSession;
             StringBuilder connectedDetails = new StringBuilder();
             if (vpnMode) {
                 setStatus(targetId, "PREPARING_TUN", "Открытие SSH TUN");
@@ -315,19 +359,103 @@ final class SshConnection {
             connectedAt = System.currentTimeMillis();
             setStatus( targetId, "CONNECTED", connectedDetails.toString());
             updateNotification("SSH tunnel connected", connectedDetails + " via " + chainLabel(chain));
-        } catch (Exception e) {
-            AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Тип исключения: " + e.getClass().getSimpleName());
-            String message = e instanceof NodeException
-                    ? ((NodeException) e).getMessage()
-                    : readableMessage(e);
-            closeActiveSession();
-            if (!cancelled) {
-                if (!SshTransportSocketFactory.isProtectionFailure(e)
-                        && e instanceof NodeException && e.getCause() != null
-                        && !message.toLowerCase(Locale.ROOT).contains("fingerprint")
-                        && !isAuthenticationFailure(e)) retryOrFail(message);
-                else fail(targetId, message);
-            }
+    }
+
+    private void requestServerPlan(Profile target, Session endpoint) throws Exception {
+        activeTunUnit = 100000000 + new Random().nextInt(100000000);
+        activeVpnTable = "ssh2socks_" + shortProfileToken(java.util.UUID.randomUUID().toString());
+        String wan = target.vpnExternalInterface.trim();
+        if (target.vpnIpv4 && wan.isEmpty()) {
+            ChannelExec probe = (ChannelExec) endpoint.openChannel("exec");
+            try {
+                probe.setCommand("ip -o route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}'");
+                InputStream output = probe.getInputStream();
+                probe.connect(10000);
+                ByteArrayOutputStream value = new ByteArrayOutputStream();
+                long deadline = System.currentTimeMillis() + 10000;
+                while (System.currentTimeMillis() < deadline) {
+                    checkCancelled();
+                    while (output.available() > 0 && value.size() < 256) value.write(output.read());
+                    if (probe.isClosed()) break;
+                    Thread.sleep(25);
+                }
+                wan = value.toString("UTF-8").trim();
+                if (!wan.matches("[A-Za-z0-9_.:-]{1,15}"))
+                    throw new IOException("Не удалось определить внешний IPv4-интерфейс сервера");
+            } finally { probe.disconnect(); }
+        }
+        if (target.serverSkipConfirmation) {
+            checkCancelled();
+            target.vpnExternalInterface = wan;
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId,
+                    "Используются сохранённые настройки сервера без запроса (выбор пользователя)");
+            logServerPlan(target);
+            completeConnection(target);
+            return;
+        }
+        String[] ipv6 = vpnIpv6Addresses(target);
+        pendingServerRequest = java.util.UUID.randomUUID().toString();
+        org.json.JSONObject request = new org.json.JSONObject();
+        request.put("requestId", pendingServerRequest);
+        request.put("interface", "tun" + activeTunUnit);
+        request.put("table", activeVpnTable);
+        request.put("wan", wan);
+        request.put("ipv6Server", ipv6[0]); request.put("ipv6Client", ipv6[1]);
+        setStatus(activeProfileId, "NEEDS_SERVER_CONFIG", request.toString());
+        AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Ожидание подтверждения серверного плана; команды настройки ещё не выполнялись");
+    }
+
+    void applyServerPlan(Intent intent) {
+        if (!"NEEDS_SERVER_CONFIG".equals(state) || pendingServerRequest.isEmpty()
+                || !pendingServerRequest.equals(intent.getStringExtra("server_request"))) return;
+        try {
+            checkCancelled();
+            if (activeSession == null || !activeSession.isConnected())
+                throw new IOException("SSH-сессия закрыта; подключитесь заново");
+            Profile profile = ProfileStore.get(context, activeProfileId);
+            if (profile == null) throw new IOException("Профиль удалён");
+            profile.vpnExternalInterface = intent.getStringExtra("server_wan");
+            if (profile.vpnExternalInterface == null) profile.vpnExternalInterface = "";
+            if (profile.vpnIpv4 && profile.vpnExternalInterface.isEmpty())
+                throw new IllegalArgumentException("Укажите внешний интерфейс IPv4");
+            profile.serverSkipConfirmation = intent.getBooleanExtra("serverSkipConfirmation", false);
+            profile.serverManageIpv4Forwarding = intent.getBooleanExtra("serverManageIpv4Forwarding", true);
+            profile.serverManageIpv6Forwarding = intent.getBooleanExtra("serverManageIpv6Forwarding", true);
+            profile.serverNatIpv4 = intent.getBooleanExtra("serverNatIpv4", true);
+            profile.serverAcceptOutbound = intent.getBooleanExtra("serverAcceptOutbound", true);
+            profile.serverAcceptReturn = intent.getBooleanExtra("serverAcceptReturn", true);
+            ServerTunConfiguration.preview(profile, "tun" + activeTunUnit, activeVpnTable, vpnIpv6Addresses(profile));
+            ProfileStore.save(context, profile);
+            pendingServerRequest = "";
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Серверные параметры подтверждены и сохранены в профиле");
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId, profile.serverSkipConfirmation
+                    ? "Повторный запрос настроек сервера отключён для этого хоста"
+                    : "Настройки сервера будут запрашиваться при следующем подключении");
+            logServerPlan(profile);
+            completeConnection(profile);
+        } catch (Exception error) {
+            AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Не удалось применить серверный план: " + error.getClass().getSimpleName());
+            fail(activeProfileId, readableMessage(error));
+        }
+    }
+
+    private void logServerPlan(Profile profile) throws Exception {
+        String plan = ServerTunConfiguration.preview(profile, "tun" + activeTunUnit, activeVpnTable, vpnIpv6Addresses(profile));
+        for (String line : plan.split("\n")) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "ПЛАН: " + line);
+    }
+
+    private void recordServerLine(ServerRun run, String line) {
+        if (line.startsWith("SSHEXIT_APPLIED:")) {
+            String description = ServerTunConfiguration.appliedDescription(line.substring("SSHEXIT_APPLIED:".length()),
+                    run.profile, run.interfaceName, run.table, run.ipv6);
+            if (!description.isEmpty())
+                for (String item : description.split("\n"))
+                    AppLog.INSTANCE.record(AppLog.INFO, connectionId, "ПРИМЕНЕНО: " + item);
+        } else if ("SSHEXIT_CLEANUP_DONE".equals(line)) {
+            run.cleanupConfirmed = true;
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Сервер подтвердил удаление правил и адресов и восстановление изменённого forwarding");
+        } else if ("SSHEXIT_CLEANUP_FAILED".equals(line)) {
+            AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Сервер сообщил об ошибке очистки ресурсов");
         }
     }
 
@@ -407,7 +535,7 @@ final class SshConnection {
     private void startVpnTunnel(Profile profile, Session endpoint) throws Exception {
         ParcelFileDescriptor descriptor = vpnInterface;
         if (descriptor == null) throw new IllegalStateException("VPN-интерфейс не создан");
-        activeTunUnit = 100000000 + new Random().nextInt(100000000);
+        if (activeTunUnit < 0) throw new IllegalStateException("Серверный план не подготовлен");
         OpenSshTunChannel tun = new OpenSshTunChannel(activeTunUnit);
         tun.setEventListener(event -> AppLog.INSTANCE.record(event.contains("FAILED") ? AppLog.ERROR : AppLog.TRACE,
                 connectionId, event));
@@ -425,15 +553,19 @@ final class SshConnection {
 
     private void startServerTunConfig(Session endpoint, Profile profile, int mtu, int unit) throws Exception {
         String interfaceName = "tun" + unit;
-        String table = "ssh2socks_" + shortProfileToken(java.util.UUID.randomUUID().toString());
+        String table = activeVpnTable;
         activeVpnTable = table;
         String[] ipv6 = vpnIpv6Addresses(profile);
         String script = ServerTunConfiguration.build(profile, interfaceName, table, mtu, ipv6);
+        ServerRun run = new ServerRun(profile, interfaceName, table, ipv6);
+        serverRun = run;
         ChannelExec monitor = (ChannelExec) endpoint.openChannel("exec");
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         monitor.setErrStream(stderr);
         monitor.setCommand("sh -c " + shellQuote(script));
         InputStream stdout = monitor.getInputStream();
+        serverConfigControl = monitor.getOutputStream();
+        serverConfigChannel = monitor;
         monitor.connect(20_000);
         StringBuilder response = new StringBuilder();
         long deadline = System.currentTimeMillis() + 20_000;
@@ -453,6 +585,8 @@ final class SshConnection {
             if (monitor.isClosed()) break;
             Thread.sleep(50);
         }
+        int lastNewline = response.lastIndexOf("\n");
+        if (lastNewline >= 0) for (String line : response.substring(0, lastNewline).split("\n")) recordServerLine(run, line);
         if (!ready) {
             String diagnostic = stderr.toString(StandardCharsets.UTF_8.name()).trim();
             monitor.disconnect();
@@ -461,7 +595,19 @@ final class SshConnection {
                     + (details.isEmpty() ? "" : ": " + details)
                     + (diagnostic.isEmpty() ? "" : " · " + diagnostic));
         }
-        serverConfigChannel = monitor;
+        String remainder = lastNewline < 0 ? response.toString() : response.substring(lastNewline + 1);
+        InputStream events = new java.io.SequenceInputStream(
+                new java.io.ByteArrayInputStream(remainder.getBytes(StandardCharsets.UTF_8)), stdout);
+        Thread reader = new Thread(() -> {
+            try {
+                BufferedReader lines = new BufferedReader(new InputStreamReader(events, StandardCharsets.UTF_8));
+                String line;
+                while ((line = lines.readLine()) != null) recordServerLine(run, line);
+            } catch (IOException ignored) { }
+        }, "server-events-" + connectionId.substring(0, 8));
+        reader.setDaemon(true);
+        serverOutputThread = reader;
+        reader.start();
         AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Серверная настройка TUN завершена");
     }
 
@@ -483,9 +629,22 @@ final class SshConnection {
 
     private void closeVpnResources() {
         ChannelExec monitor = serverConfigChannel;
+        ServerRun run = serverRun;
+        serverRun = null;
         serverConfigChannel = null;
         if (monitor != null) {
-            try { monitor.disconnect(); } catch (Exception ignored) {}
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Запрошена очистка серверных ресурсов");
+            try {
+                OutputStream control = serverConfigControl;
+                serverConfigControl = null;
+                if (control != null) { control.write("stop\n".getBytes(StandardCharsets.UTF_8)); control.flush(); }
+                Thread reader = serverOutputThread;
+                if (reader != null && reader != Thread.currentThread()) reader.join(2000);
+            } catch (Exception ignored) { }
+            if (run == null || !run.cleanupConfirmed)
+                AppLog.INSTANCE.record(AppLog.WARN, connectionId, "Очистка сервера не подтверждена (сеть или SSH могли быть недоступны)");
+            try { monitor.disconnect(); } catch (Exception ignored) { }
+            serverOutputThread = null;
         }
         // Closing the descriptor first unblocks the channel's TUN read before disconnect joins it.
         ParcelFileDescriptor descriptor = vpnInterface;

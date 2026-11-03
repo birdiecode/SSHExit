@@ -48,6 +48,7 @@ public final class SshTunnelService extends VpnService {
     static final String ACTION_TRUST = "host.birdiecode.sshexit.TRUST";
     static final String ACTION_STOP = "host.birdiecode.sshexit.STOP";
     static final String EXTRA_PROFILE_ID = "profile_id";
+    static final String ACTION_SERVER_CONFIG = "host.birdiecode.sshexit.SERVER_CONFIG";
     static final String ACTION_PASSWORD = "host.birdiecode.sshexit.PASSWORD";
     static final String EXTRA_NODE_ID = "node_id";
     static final String EXTRA_PASSWORD = "password";
@@ -107,6 +108,7 @@ public final class SshTunnelService extends VpnService {
             SshConnection current = connection;
             String target = id;
             if (ACTION_TRUST.equals(action)) current.execute(() -> current.trustAndConnect(target));
+            else if (ACTION_SERVER_CONFIG.equals(action)) current.execute(() -> current.applyServerPlan(intent));
             else if (ACTION_PASSWORD.equals(action)) {
                 String node = intent.getStringExtra(EXTRA_NODE_ID);
                 String password = intent.getStringExtra(EXTRA_PASSWORD);
