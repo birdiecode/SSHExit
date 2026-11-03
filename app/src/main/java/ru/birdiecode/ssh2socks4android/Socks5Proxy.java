@@ -131,13 +131,18 @@ final class Socks5Proxy {
             channel.setPort(destinationPort);
             channel.setOrgIPAddress(client.getInetAddress().getHostAddress());
             channel.setOrgPort(client.getPort());
+            // Install the receive pipe before opening: a target may send its greeting immediately.
+            InputStream sshInput = channel.getInputStream();
+            OutputStream sshOutput = channel.getOutputStream();
             channel.connect(20_000);
 
             writeReply(output, 0);
             successReplySent = true;
             ChannelDirectTCPIP connectedChannel = channel;
-            Thread toSsh = new Thread(() -> copy(client, connectedChannel, true), "socks5-to-ssh");
-            Thread toClient = new Thread(() -> copy(client, connectedChannel, false), "ssh-to-socks5");
+            InputStream clientInput = client.getInputStream();
+            OutputStream clientOutput = client.getOutputStream();
+            Thread toSsh = new Thread(() -> copy(client, connectedChannel, clientInput, sshOutput), "socks5-to-ssh");
+            Thread toClient = new Thread(() -> copy(client, connectedChannel, sshInput, clientOutput), "ssh-to-socks5");
             toSsh.setDaemon(true);
             toClient.setDaemon(true);
             toSsh.start();
@@ -158,10 +163,8 @@ final class Socks5Proxy {
         }
     }
 
-    private void copy(Socket client, ChannelDirectTCPIP channel, boolean clientToSsh) {
+    private void copy(Socket client, ChannelDirectTCPIP channel, InputStream input, OutputStream output) {
         try {
-            InputStream input = clientToSsh ? client.getInputStream() : channel.getInputStream();
-            OutputStream output = clientToSsh ? channel.getOutputStream() : client.getOutputStream();
             byte[] buffer = new byte[16 * 1024];
             int count;
             while ((count = input.read(buffer)) != -1) {
