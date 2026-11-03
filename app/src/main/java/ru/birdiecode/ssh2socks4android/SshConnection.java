@@ -101,6 +101,7 @@ final class SshConnection {
         boolean lost = activeSession == null || !activeSession.isConnected();
         if (activeTun != null && activeTun.isClosed()) lost = true;
         if (serverConfigChannel != null && serverConfigChannel.isClosed()) lost = true;
+        if (lost && System.currentTimeMillis() - connectedAt >= 60000) retryAttempt = 0;
         if (lost) retryOrFail("SSH-транспорт или TUN-канал закрыт");
     }
 
@@ -136,6 +137,7 @@ final class SshConnection {
     private void updateNotification(String title, String detail) { host.changed(this); }
     private final java.util.concurrent.ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
     private int retryAttempt;
+    private long connectedAt;
     private java.util.concurrent.ScheduledFuture<?> retry;
     private final java.util.ArrayDeque<String> events = new java.util.ArrayDeque<>();
     private final List<Session> activeSessions = Collections.synchronizedList(new ArrayList<>());
@@ -294,7 +296,7 @@ final class SshConnection {
                 connectedDetails.append("SOCKS5 127.0.0.1:").append(target.localPort);
             }
             checkCancelled();
-            retryAttempt = 0;
+            connectedAt = System.currentTimeMillis();
             setStatus( targetId, "CONNECTED", connectedDetails.toString());
             updateNotification("SSH tunnel connected", connectedDetails + " via " + chainLabel(chain));
         } catch (Exception e) {
@@ -303,7 +305,8 @@ final class SshConnection {
                     : readableMessage(e);
             closeActiveSession();
             if (!cancelled) {
-                if (retryAttempt > 0 && !message.toLowerCase(Locale.ROOT).contains("fingerprint")
+                if (e instanceof NodeException && e.getCause() != null
+                        && !message.toLowerCase(Locale.ROOT).contains("fingerprint")
                         && !isAuthenticationFailure(e)) retryOrFail(message);
                 else fail(targetId, message);
             }
