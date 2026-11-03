@@ -53,7 +53,6 @@ public final class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, TextView> rowStatuses = new HashMap<>();
-    private final Map<String, MaterialButton> rowActions = new HashMap<>();
     private final Map<String, TextView> rowFingerprints = new HashMap<>();
     private final Map<String, View> rowErrorPanels = new HashMap<>();
     private final Map<String, TextView> rowErrorSummaries = new HashMap<>();
@@ -203,7 +202,6 @@ public final class MainActivity extends Activity {
         if (list == null) return;
         list.removeAllViews();
         rowStatuses.clear();
-        rowActions.clear();
         rowFingerprints.clear();
         rowErrorPanels.clear();
         rowErrorSummaries.clear();
@@ -233,6 +231,9 @@ public final class MainActivity extends Activity {
         for (Profile profile : profiles) {
             MaterialCardView card = surfaceCard();
             card.setContentPadding(dp(16), dp(14), dp(16), dp(14));
+            card.setClickable(true);
+            card.setFocusable(true);
+            card.setOnClickListener(v -> toggle(profile));
             LinearLayout.LayoutParams cardParams = params(-1, -2);
             cardParams.bottomMargin = dp(12);
             list.addView(card, cardParams);
@@ -332,28 +333,7 @@ public final class MainActivity extends Activity {
             rowErrorSummaries.put(profile.id, errorSummary);
             rowTechnicalDetails.put(profile.id, technicalDetails);
 
-            MaterialButton action = makeButton("Подключить", true);
-            action.setOnClickListener(v -> toggle(profile));
-            LinearLayout.LayoutParams actionParams = params(-1, dp(46));
-            actionParams.topMargin = dp(12);
-            content.addView(action, actionParams);
-            rowActions.put(profile.id, action);
 
-            LinearLayout secondaryActions = new LinearLayout(this);
-            secondaryActions.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams secondaryParams = params(-1, -2);
-            secondaryParams.topMargin = dp(6);
-            content.addView(secondaryActions, secondaryParams);
-
-            MaterialButton edit = makeButton("Изменить", false);
-            edit.setOnClickListener(v -> showEditor(profile));
-            secondaryActions.addView(edit, new LinearLayout.LayoutParams(0, dp(46), 1f));
-
-            MaterialButton delete = makeButton("Удалить", false);
-            delete.setOnClickListener(v -> confirmDelete(profile));
-            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
-            deleteParams.leftMargin = dp(8);
-            secondaryActions.addView(delete, deleteParams);
 
         }
         refreshStatuses();
@@ -389,7 +369,6 @@ public final class MainActivity extends Activity {
 
         for (String id : rowStatuses.keySet()) {
             TextView row = rowStatuses.get(id);
-            MaterialButton action = rowActions.get(id);
             Profile rowProfile = ProfileStore.get(this, id);
             TextView fingerprint = rowFingerprints.get(id);
             if (rowProfile != null && fingerprint != null) updateFingerprintStatus(fingerprint, rowProfile);
@@ -403,36 +382,27 @@ public final class MainActivity extends Activity {
                 if (errorSummary != null) errorSummary.setText(friendlyConnectionError(rawError));
                 if (technicalDetails != null) technicalDetails.setText(rawError);
             }
-            if (row == null || action == null) continue;
+            if (row == null) continue;
+
             if (!id.equals(profileId)) {
                 boolean hasFingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
                         && !rowProfile.observedFingerprint.isEmpty();
                 setStatusChip(row, hasFingerprintError ? "Fingerprint не совпал" : "Отключено",
                         hasFingerprintError ? "ERROR" : "IDLE");
-                action.setText("Подключить");
-                styleButton(action, true);
+            } else if ("ERROR".equals(status)) {
+                boolean fingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
+                        && !rowProfile.observedFingerprint.isEmpty();
+                setStatusChip(row, fingerprintError ? "Fingerprint не совпал" : "Ошибка", "ERROR");
+            } else if ("CONNECTED".equals(status)) {
+                setStatusChip(row, "Подключено", "CONNECTED");
+            } else if ("CONNECTING".equals(status)) {
+                setStatusChip(row, "Подключение…", "CONNECTING");
+            } else if ("NEEDS_TRUST".equals(status)) {
+                setStatusChip(row, "Ожидает проверки", "CONNECTING");
+            } else if ("NEEDS_PASSWORD".equals(status)) {
+                setStatusChip(row, "Ожидает пароль", "CONNECTING");
             } else {
-                if ("ERROR".equals(status)) {
-                    boolean fingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
-                            && !rowProfile.observedFingerprint.isEmpty();
-                    setStatusChip(row, fingerprintError ? "Fingerprint не совпал" : "Ошибка",
-                            "ERROR");
-                    row.setOnClickListener(null);
-                } else if ("CONNECTED".equals(status)) {
-                    setStatusChip(row, "Подключено", "CONNECTED");
-                } else if ("CONNECTING".equals(status)) {
-                    setStatusChip(row, "Подключение…", "CONNECTING");
-                } else if ("NEEDS_TRUST".equals(status)) {
-                    setStatusChip(row, "Ожидает проверки", "CONNECTING");
-                } else if ("NEEDS_PASSWORD".equals(status)) {
-                    setStatusChip(row, "Ожидает пароль", "CONNECTING");
-                } else {
-                    setStatusChip(row, "Отключено", "IDLE");
-                }
-                boolean running = "CONNECTED".equals(status) || "CONNECTING".equals(status)
-                        || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status);
-                action.setText(running ? "Отключить" : "Подключить");
-                styleButton(action, !running);
+                setStatusChip(row, "Отключено", "IDLE");
             }
         }
     }
