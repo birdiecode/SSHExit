@@ -14,6 +14,7 @@ final class SshJumpProxy implements Proxy {
     private ChannelDirectTCPIP channel;
     private InputStream input;
     private OutputStream output;
+    private SshStreamSocket socket;
 
     SshJumpProxy(Session jumpSession) {
         this.jumpSession = jumpSession;
@@ -28,6 +29,8 @@ final class SshJumpProxy implements Proxy {
         channel.setOrgIPAddress("127.0.0.1");
         channel.setOrgPort(0);
         try {
+            input = channel.getInputStream();
+            output = channel.getOutputStream();
             channel.connect(timeout);
         } catch (Exception e) {
             try { channel.disconnect(); } catch (Exception ignored) {}
@@ -37,18 +40,22 @@ final class SshJumpProxy implements Proxy {
                     + target + ":" + port
                     + ". Check target reachability from the jump server and its TCP forwarding policy.", e);
         }
-        input = channel.getInputStream();
-        output = channel.getOutputStream();
+        socket = new SshStreamSocket(input, output);
+        input = socket.getInputStream();
+        output = socket.getOutputStream();
     }
 
     @Override public InputStream getInputStream() { return input; }
     @Override public OutputStream getOutputStream() { return output; }
 
-    // JSch treats this socket as optional when a Proxy supplies its own streams.
-    @Override public Socket getSocket() { return null; }
+    // Expose SO_TIMEOUT so JSch keepalive also works beyond a jump host.
+    @Override public Socket getSocket() { return socket; }
 
     @Override
     public void close() {
+        SshStreamSocket current = socket;
+        socket = null;
+        if (current != null) { try { current.close(); } catch (java.io.IOException ignored) { } }
         if (channel != null) {
             try { channel.disconnect(); } catch (Exception ignored) {}
             channel = null;
