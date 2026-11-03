@@ -60,10 +60,12 @@ public final class SshTunnelService extends VpnService {
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private SshConnection vpnOwner;
     private boolean destroyed;
+    private final ExecutorService cleanup = Executors.newFixedThreadPool(4);
     private final SshConnection.Host connectionHost = new SshConnection.Host() {
         @Override public void changed(SshConnection connection) { main.post(() -> refreshNotification()); }
         @Override public void claimVpn(SshConnection connection) { claimVpnOwner(connection); }
         @Override public void releaseVpn(SshConnection connection) { releaseVpnOwner(connection); }
+        @Override public void cleanup(Runnable action) { cleanup.execute(action); }
         @Override public boolean isCurrent(SshConnection connection) {
             return connections.get(connection.profileId()) == connection;
         }
@@ -118,12 +120,18 @@ public final class SshTunnelService extends VpnService {
     // A shared packet router replaces this single-VPN reservation in the next stage.
     // Explicit rejection protects existing tunnels while lifecycle isolation is introduced.
     private synchronized void claimVpnOwner(SshConnection connection) {
+        long deadline = System.currentTimeMillis() + 20000;
+        while (vpnOwner != null && vpnOwner != connection && !vpnOwner.isLive()
+                && System.currentTimeMillis() < deadline) {
+            try { wait(100); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("Подключение отменено"); }
+        }
         if (vpnOwner != null && vpnOwner != connection)
             throw new IllegalStateException("В этой сборке пока поддерживается один VPN и несколько SOCKS5");
         vpnOwner = connection;
     }
     private synchronized void releaseVpnOwner(SshConnection connection) {
-        if (vpnOwner == connection) vpnOwner = null;
+        if (vpnOwner == connection) { vpnOwner = null; notifyAll(); }
     }
 
     private void refreshNotification() {
@@ -187,13 +195,14 @@ public final class SshTunnelService extends VpnService {
         destroyed = true;
         for (SshConnection c : connections.values()) c.shutdown();
         connections.clear();
+        cleanup.shutdown();
         super.onDestroy();
     }
 
     @Override public IBinder onBind(Intent intent) { return super.onBind(intent); }
 
     @Override public void onRevoke() {
-        for (SshConnection c : connections.values()) c.shutdown();
+        for (SshConnection c : connections.values()) if (c.usesVpn()) c.shutdown();
         refreshNotification();
         super.onRevoke();
     }
