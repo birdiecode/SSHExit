@@ -735,6 +735,8 @@ public final class MainActivity extends Activity {
         vpnSettings.setPadding(0, dp(8), 0, dp(4));
         CheckBox vpnIpv4 = checkBox("IPv4", profile.vpnIpv4);
         CheckBox vpnIpv6 = checkBox("IPv6", profile.vpnIpv6);
+        EditText vpnIpv6Prefix = input("Маршрутизируемый IPv6-префикс сервера (например, 2001:db8:abcd::/64)",
+                profile.vpnIpv6Prefix, InputType.TYPE_CLASS_TEXT);
         CheckBox vpnFullTunnel = checkBox("Полный туннель", profile.vpnFullTunnel);
         CheckBox vpnPrimary = checkBox("Использовать как основной VPN", profile.vpnPrimary);
         CheckBox vpnFailover = checkBox("Разрешить резервное переключение", profile.vpnFailover);
@@ -755,6 +757,7 @@ public final class MainActivity extends Activity {
                 profile.vpnExternalInterface, InputType.TYPE_CLASS_TEXT);
         vpnSettings.addView(vpnIpv4);
         vpnSettings.addView(vpnIpv6);
+        vpnSettings.addView(vpnIpv6Prefix);
         vpnSettings.addView(vpnFullTunnel);
         vpnSettings.addView(vpnMtu);
         vpnSettings.addView(vpnDns);
@@ -805,6 +808,19 @@ public final class MainActivity extends Activity {
                 if (vpnPriorityValue < -1000 || vpnPriorityValue > 1000) {
                     throw new IllegalArgumentException("Приоритет должен быть от -1000 до 1000");
                 }
+                String ipv6PrefixValue = vpnIpv6Prefix.getText().toString().trim();
+                if (!ipv6PrefixValue.isEmpty()) {
+                    String normalizedIpv6Prefix = VpnRouteTable.normalizePrefix(ipv6PrefixValue);
+                    if (!normalizedIpv6Prefix.contains(":")
+                            || Integer.parseInt(normalizedIpv6Prefix.substring(normalizedIpv6Prefix.lastIndexOf("/") + 1)) > 64) {
+                        throw new IllegalArgumentException("Для IPv6 укажите маршрутизируемый префикс не короче /64");
+                    }
+                    ipv6PrefixValue = normalizedIpv6Prefix;
+                }
+                if (mode.getSelectedItemPosition() != 0 && vpnIpv6.isChecked()
+                        && vpnFullTunnel.isChecked() && ipv6PrefixValue.isEmpty()) {
+                    throw new IllegalArgumentException("Для полного IPv6-туннеля нужен выделенный маршрутизируемый префикс");
+                }
                 String interfaceValue = vpnInterface.getText().toString().trim();
                 if (!interfaceValue.isEmpty() && !interfaceValue.matches("[A-Za-z0-9_.-]{1,15}")) {
                     throw new IllegalArgumentException("Недопустимое имя сетевого интерфейса");
@@ -827,6 +843,7 @@ public final class MainActivity extends Activity {
                 profile.connectionMode = modeValues[mode.getSelectedItemPosition()];
                 profile.vpnIpv4 = vpnIpv4.isChecked();
                 profile.vpnIpv6 = vpnIpv6.isChecked();
+                profile.vpnIpv6Prefix = ipv6PrefixValue;
                 profile.vpnMtu = vpnMtuValue;
                 profile.vpnDnsServers = vpnDns.getText().toString().trim();
                 profile.vpnFullTunnel = vpnFullTunnel.isChecked();
@@ -1090,6 +1107,7 @@ public final class MainActivity extends Activity {
         p.connectionMode = source.connectionMode;
         p.vpnIpv4 = source.vpnIpv4;
         p.vpnIpv6 = source.vpnIpv6;
+        p.vpnIpv6Prefix = source.vpnIpv6Prefix;
         p.vpnMtu = source.vpnMtu;
         p.vpnDnsServers = source.vpnDnsServers;
         p.vpnFullTunnel = source.vpnFullTunnel;
