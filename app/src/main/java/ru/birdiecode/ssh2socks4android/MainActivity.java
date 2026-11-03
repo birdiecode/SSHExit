@@ -108,9 +108,9 @@ public final class MainActivity extends Activity {
         });
         page.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
 
-        TextView title = text("SSH2SOCKS", 23, 0xFF152033, true);
+        TextView title = text(getString(R.string.app_name), 23, 0xFF152033, true);
         page.addView(title);
-        TextView subtitle = text("SSH-туннели · локальный SOCKS5", 14, 0xFF65728A, false);
+        TextView subtitle = text("SSH VPN · SOCKS5", 14, 0xFF65728A, false);
         LinearLayout.LayoutParams subtitleParams = params(-1, -2);
         subtitleParams.topMargin = dp(2);
         page.addView(subtitle, subtitleParams);
@@ -249,7 +249,7 @@ public final class MainActivity extends Activity {
             android.content.ClipboardManager clipboard =
                     (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             if (clipboard != null) {
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SSH2SOCKS — логи", journal));
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.app_name) + " — логи", journal));
                 Toast.makeText(this, "Логи скопированы", Toast.LENGTH_SHORT).show();
             }
         });
