@@ -47,6 +47,11 @@ final class ProfileStore {
                 p.vpnFailover = json.optBoolean("vpnFailover", false);
                 p.vpnAutoReconnect = json.optBoolean("vpnAutoReconnect", true);
                 p.vpnExternalInterface = json.optString("vpnExternalInterface", "");
+                p.serverManageIpv4Forwarding = json.optBoolean("serverManageIpv4Forwarding", true);
+                p.serverManageIpv6Forwarding = json.optBoolean("serverManageIpv6Forwarding", true);
+                p.serverNatIpv4 = json.optBoolean("serverNatIpv4", true);
+                p.serverAcceptOutbound = json.optBoolean("serverAcceptOutbound", true);
+                p.serverAcceptReturn = json.optBoolean("serverAcceptReturn", true);
                 p.keyId = json.optString("keyId");
                 p.encryptedKey = json.optString("encryptedKey");
                 p.encryptedPassword = json.optString("encryptedPassword");
@@ -226,6 +231,11 @@ final class ProfileStore {
             json.put("vpnFailover", p.vpnFailover);
             json.put("vpnAutoReconnect", p.vpnAutoReconnect);
             json.put("vpnExternalInterface", p.vpnExternalInterface);
+            json.put("serverManageIpv4Forwarding", p.serverManageIpv4Forwarding);
+            json.put("serverManageIpv6Forwarding", p.serverManageIpv6Forwarding);
+            json.put("serverNatIpv4", p.serverNatIpv4);
+            json.put("serverAcceptOutbound", p.serverAcceptOutbound);
+            json.put("serverAcceptReturn", p.serverAcceptReturn);
             json.put("keyId", p.keyId);
             json.put("encryptedKey", p.encryptedKey);
             json.put("encryptedPassword", p.encryptedPassword);
