@@ -720,6 +720,9 @@ public final class MainActivity extends Activity {
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
                 String hostValue = host.getText().toString().trim();
+                if (hostValue.startsWith("[") && hostValue.endsWith("]") && hostValue.length() > 2) {
+                    hostValue = hostValue.substring(1, hostValue.length() - 1);
+                }
                 String userValue = username.getText().toString().trim();
                 int sshPortValue = parsePort(sshPort.getText().toString(), "SSH-порт");
                 int socksPortValue = parsePort(localPort.getText().toString(), "SOCKS5-порт");
