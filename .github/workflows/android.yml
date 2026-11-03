@@ -71,7 +71,7 @@ jobs:
         run: |
           BADGING="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk)"
           case "$BADGING" in
-            *"package: name='ru.birdiecode.sshexit'"*) ;;
+            *"package: name='host.birdiecode.sshexit'"*) ;;
             *) echo "Unexpected application ID"; exit 1 ;;
           esac
           case "$BADGING" in
