@@ -30,6 +30,33 @@ public class ConnectionStateMachineTest {
         try { a.transition(CONNECTED); fail("Skipped authentication"); }
         catch (IllegalStateException expected) { assertEquals(CONNECTING, a.get()); }
     }
+    @Test public void cancellationWorksDuringEverySetupPhase() {
+        ConnectionStateMachine.State[][] paths = {
+            {CONNECTING},
+            {CONNECTING, AUTHENTICATING},
+            {CONNECTING, AUTHENTICATING, NEEDS_PASSWORD},
+            {CONNECTING, AUTHENTICATING, NEEDS_TRUST},
+            {CONNECTING, AUTHENTICATING, PREPARING_TUN},
+            {CONNECTING, AUTHENTICATING, PREPARING_TUN, CONFIGURING_SERVER}
+        };
+        for (ConnectionStateMachine.State[] path : paths) {
+            ConnectionStateMachine machine = new ConnectionStateMachine();
+            for (ConnectionStateMachine.State state : path) machine.transition(state);
+            machine.disconnect();
+            machine.disconnect();
+            assertEquals(DISCONNECTED, machine.get());
+        }
+    }
+
+    @Test public void transportFailureDuringReconnectCanRetryAgain() {
+        ConnectionStateMachine machine = connected();
+        machine.transition(RECONNECTING);
+        machine.transition(CONNECTING);
+        machine.transition(AUTHENTICATING);
+        machine.transition(RECONNECTING);
+        assertEquals(RECONNECTING, machine.get());
+    }
+
     private ConnectionStateMachine connected() {
         ConnectionStateMachine a = new ConnectionStateMachine();
         a.transition(CONNECTING); a.transition(AUTHENTICATING); a.transition(CONNECTED);
