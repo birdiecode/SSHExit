@@ -37,6 +37,7 @@ final class ProfileStore {
                 p.connectionMode = json.optString("connectionMode", "SOCKS5");
                 p.vpnIpv4 = json.optBoolean("vpnIpv4", true);
                 p.vpnIpv6 = json.optBoolean("vpnIpv6", false);
+                p.vpnIpv6Prefix = json.optString("vpnIpv6Prefix", "");
                 p.vpnMtu = json.optInt("vpnMtu", 1400);
                 p.vpnDnsServers = json.optString("vpnDnsServers", "1.1.1.1");
                 p.vpnFullTunnel = json.optBoolean("vpnFullTunnel", true);
@@ -196,6 +197,7 @@ final class ProfileStore {
             json.put("connectionMode", p.connectionMode);
             json.put("vpnIpv4", p.vpnIpv4);
             json.put("vpnIpv6", p.vpnIpv6);
+            json.put("vpnIpv6Prefix", p.vpnIpv6Prefix);
             json.put("vpnMtu", p.vpnMtu);
             json.put("vpnDnsServers", p.vpnDnsServers);
             json.put("vpnFullTunnel", p.vpnFullTunnel);
