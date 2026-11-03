@@ -251,7 +251,7 @@ final class SshConnection {
                         requestTrust(targetId, node.id, offered);
                         return;
                     }
-                    if (!offered.isEmpty()) {
+                    if (!offered.isEmpty() && !offered.equals(node.hostFingerprint)) {
                         node.observedFingerprint = offered;
                         ProfileStore.save(context, node);
                         throw new NodeException(node,
