@@ -63,6 +63,7 @@ final class SshConnection {
         this.service = service;
         this.host = host;
         this.activeProfileId = profileId;
+        worker.scheduleWithFixedDelay(this::checkHealth, 2, 2, java.util.concurrent.TimeUnit.SECONDS);
     }
     String profileId() { return activeProfileId; }
     boolean isLive() {
@@ -80,22 +81,51 @@ final class SshConnection {
         pendingPasswords.put(nodeId, password);
         connect(activeProfileId);
     }
+    private void checkHealth() {
+        if (!"CONNECTED".equals(state) || cancelled) return;
+        boolean lost = activeSession == null || !activeSession.isConnected();
+        if (activeTun != null && activeTun.isClosed()) lost = true;
+        if (serverConfigChannel != null && serverConfigChannel.isClosed()) lost = true;
+        if (lost) retryOrFail("SSH-транспорт или TUN-канал закрыт");
+    }
+
+    private void retryOrFail(String reason) {
+        closeActiveSession();
+        Profile profile = ProfileStore.get(context, activeProfileId);
+        if (cancelled || !host.isCurrent(this)) return;
+        if (profile == null || !profile.vpnAutoReconnect) { fail(activeProfileId, reason); return; }
+        if (retry != null && !retry.isDone()) return;
+        long ceiling = Math.min(60000L, 1000L << Math.min(retryAttempt++, 6));
+        long delay = ceiling / 2 + new Random().nextInt((int) (ceiling / 2 + 1));
+        setStatus(activeProfileId, "RECONNECTING", "Повторное подключение через " + delay + " мс");
+        retry = worker.schedule(() -> {
+            retry = null;
+            if (!cancelled) connect(activeProfileId);
+        }, delay, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
     private void checkCancelled() throws IOException {
         if (cancelled || !host.isCurrent(this)) throw new IOException("Подключение отменено");
     }
     private synchronized void setStatus(String profileId, String state, String detail) {
         if (!host.isCurrent(this) || (cancelled && !"IDLE".equals(state))) return;
         this.state = state;
+        if (events.size() == 64) events.removeFirst();
+        // Deliberately record states only: exceptions may contain server-controlled text.
+        events.addLast(System.currentTimeMillis() + " " + connectionId + " " + state);
         ProfileStore.setStatus(context, profileId, state, detail);
         host.changed(this);
     }
     private void updateNotification(String title, String detail) { host.changed(this); }
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
+    private int retryAttempt;
+    private java.util.concurrent.ScheduledFuture<?> retry;
+    private final java.util.ArrayDeque<String> events = new java.util.ArrayDeque<>();
     private final List<Session> activeSessions = Collections.synchronizedList(new ArrayList<>());
     private volatile Session activeSession;
     private volatile Socks5Proxy activeProxy;
     private final String activeProfileId;
-    private final Map<String, String> pendingPasswords = new HashMap<>();
+    private final Map<String, String> pendingPasswords = new java.util.concurrent.ConcurrentHashMap<>();
     private volatile ParcelFileDescriptor vpnInterface;
     private volatile OpenSshTunChannel activeTun;
     private volatile ChannelExec serverConfigChannel;
@@ -167,6 +197,8 @@ final class SshConnection {
                 Session session = jsch.getSession(node.username, normalizeSshHost(node.host), node.sshPort);
                 session.setSocketFactory(protectedSocketFactory());
                 session.setConfig("StrictHostKeyChecking", "yes");
+                session.setServerAliveInterval(10000);
+                session.setServerAliveCountMax(3);
                 String promptedPassword = pendingPasswords.get(node.id);
                 boolean hasSavedPassword = node.encryptedPassword != null && !node.encryptedPassword.isEmpty();
                 if (promptedPassword != null) {
@@ -181,6 +213,7 @@ final class SshConnection {
                 if (previous != null) session.setProxy(new SshJumpProxy(previous));
                 activeSessions.add(session);
                 checkCancelled();
+                setStatus(targetId, "AUTHENTICATING", "SSH: " + display(node));
                 try {
                     session.connect(20_000);
                 } catch (Exception e) {
@@ -231,6 +264,7 @@ final class SshConnection {
             activeSession = previous;
             StringBuilder connectedDetails = new StringBuilder();
             if (vpnMode) {
+                setStatus(targetId, "PREPARING_TUN", "Открытие SSH TUN");
                 startVpnTunnel(target, previous);
                 connectedDetails.append("SSH TUN VPN active");
             }
@@ -242,6 +276,7 @@ final class SshConnection {
                 connectedDetails.append("SOCKS5 127.0.0.1:").append(target.localPort);
             }
             checkCancelled();
+            retryAttempt = 0;
             setStatus( targetId, "CONNECTED", connectedDetails.toString());
             updateNotification("SSH tunnel connected", connectedDetails + " via " + chainLabel(chain));
         } catch (Exception e) {
@@ -345,6 +380,7 @@ final class SshConnection {
                 new FileOutputStream(descriptor.getFileDescriptor()), mtu), true);
         tun.openOn(endpoint, 20_000);
         activeTun = tun;
+        setStatus(activeProfileId, "CONFIGURING_SERVER", "Настройка сервера");
         startServerTunConfig(endpoint, profile, mtu, activeTunUnit);
     }
 
@@ -502,6 +538,7 @@ final class SshConnection {
 
     void disconnect() {
         cancelled = true;
+        if (retry != null) retry.cancel(false);
         closeActiveSession();
         pendingPasswords.clear();
         
