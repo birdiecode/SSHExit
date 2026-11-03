@@ -11,6 +11,21 @@ final class Profile {
     String username = "";
     int localPort = 1080;
 
+    // VPN settings; profiles created before VPN support retain SOCKS5 as their mode.
+    String connectionMode = "SOCKS5";
+    boolean vpnIpv4 = true;
+    boolean vpnIpv6 = false;
+    String vpnIpv6Prefix = "";
+    int vpnMtu = 1400;
+    String vpnDnsServers = "1.1.1.1";
+    boolean vpnFullTunnel = true;
+    String vpnRoutes = "";
+    int vpnRoutePriority = 0;
+    boolean vpnPrimary = false;
+    boolean vpnFailover = false;
+    boolean vpnAutoReconnect = true;
+    String vpnExternalInterface = "";
+
     // New graph-based routing. Empty means direct connection.
     String jumpProfileId = "";
 

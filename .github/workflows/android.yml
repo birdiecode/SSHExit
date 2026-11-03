@@ -47,6 +47,9 @@ jobs:
           chmod 600 "$RUNNER_TEMP/ssh2socks-release.p12"
           test -s "$RUNNER_TEMP/ssh2socks-release.p12"
 
+      - name: Run unit tests
+        run: gradle --no-daemon testDebugUnitTest
+
       - name: Assemble debug APK for pull requests
         if: github.event_name == 'pull_request'
         run: gradle --no-daemon assembleDebug
@@ -64,10 +67,22 @@ jobs:
           test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret."; exit 1; }
           gradle --no-daemon assembleDebug
 
+      - name: Verify SSHExit application identity
+        run: |
+          BADGING="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk)"
+          case "$BADGING" in
+            *"package: name='host.birdiecode.sshexit'"*) ;;
+            *) echo "Unexpected application ID"; exit 1 ;;
+          esac
+          case "$BADGING" in
+            *"application-label:'SSHExit'"*) ;;
+            *) echo "Unexpected application label"; exit 1 ;;
+          esac
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ssh2socks-debug-apk
+          name: sshexit-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14

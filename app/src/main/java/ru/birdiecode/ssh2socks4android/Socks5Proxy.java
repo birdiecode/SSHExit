@@ -21,13 +21,18 @@ import java.util.concurrent.Executors;
 final class Socks5Proxy {
     private final Session session;
     private final int port;
+    private final String connectionId;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private volatile ServerSocket server;
     private volatile ExecutorService workers;
+    private volatile Thread acceptThread;
 
-    Socks5Proxy(Session session, int port) {
+    Socks5Proxy(Session session, int port) { this(session, port, "socks"); }
+
+    Socks5Proxy(Session session, int port, String connectionId) {
         this.session = session;
         this.port = port;
+        this.connectionId = connectionId;
     }
 
     void start() throws IOException {
@@ -37,6 +42,7 @@ final class Socks5Proxy {
         server = socket;
         workers = Executors.newCachedThreadPool();
         Thread acceptor = new Thread(this::acceptLoop, "socks5-accept");
+        acceptThread = acceptor;
         acceptor.setDaemon(true);
         acceptor.start();
     }
@@ -47,6 +53,12 @@ final class Socks5Proxy {
         if (listener != null) {
             try { listener.close(); } catch (IOException ignored) {}
         }
+        Thread acceptor = acceptThread;
+        acceptThread = null;
+        if (acceptor != null && acceptor != Thread.currentThread()) {
+            try { acceptor.join(2000); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        }
         for (Socket client : clients) closeQuietly(client);
         ExecutorService pool = workers;
         workers = null;
@@ -56,7 +68,10 @@ final class Socks5Proxy {
     private void acceptLoop() {
         while (server != null) {
             try {
-                Socket client = server.accept();
+                ServerSocket listener = server;
+                if (listener == null) return;
+                Socket client = listener.accept();
+                client.setReuseAddress(true);
                 client.setTcpNoDelay(true);
                 clients.add(client);
                 ExecutorService pool = workers;
@@ -72,6 +87,7 @@ final class Socks5Proxy {
     private void handle(Socket client) {
         ChannelDirectTCPIP channel = null;
         boolean successReplySent = false;
+        AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Принят локальный SOCKS5-клиент");
         try {
             DataInputStream input = new DataInputStream(client.getInputStream());
             DataOutputStream output = new DataOutputStream(client.getOutputStream());
@@ -131,13 +147,19 @@ final class Socks5Proxy {
             channel.setPort(destinationPort);
             channel.setOrgIPAddress(client.getInetAddress().getHostAddress());
             channel.setOrgPort(client.getPort());
+            // Install the receive pipe before opening: a target may send its greeting immediately.
+            InputStream sshInput = channel.getInputStream();
+            OutputStream sshOutput = channel.getOutputStream();
             channel.connect(20_000);
+            AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SOCKS5: открыт канал direct-tcpip");
 
             writeReply(output, 0);
             successReplySent = true;
             ChannelDirectTCPIP connectedChannel = channel;
-            Thread toSsh = new Thread(() -> copy(client, connectedChannel, true), "socks5-to-ssh");
-            Thread toClient = new Thread(() -> copy(client, connectedChannel, false), "ssh-to-socks5");
+            InputStream clientInput = client.getInputStream();
+            OutputStream clientOutput = client.getOutputStream();
+            Thread toSsh = new Thread(() -> copy(client, connectedChannel, clientInput, sshOutput), "socks5-to-ssh");
+            Thread toClient = new Thread(() -> copy(client, connectedChannel, sshInput, clientOutput), "ssh-to-socks5");
             toSsh.setDaemon(true);
             toClient.setDaemon(true);
             toSsh.start();
@@ -145,6 +167,7 @@ final class Socks5Proxy {
             toSsh.join();
             toClient.join();
         } catch (Exception e) {
+            AppLog.INSTANCE.record(AppLog.WARN, connectionId, "SOCKS5: " + AppLog.errorCategory(e.getMessage()));
             if (!successReplySent) {
                 try { writeReply(new DataOutputStream(client.getOutputStream()), 1); }
                 catch (Exception ignored) {}
@@ -158,10 +181,8 @@ final class Socks5Proxy {
         }
     }
 
-    private void copy(Socket client, ChannelDirectTCPIP channel, boolean clientToSsh) {
+    private void copy(Socket client, ChannelDirectTCPIP channel, InputStream input, OutputStream output) {
         try {
-            InputStream input = clientToSsh ? client.getInputStream() : channel.getInputStream();
-            OutputStream output = clientToSsh ? channel.getOutputStream() : client.getOutputStream();
             byte[] buffer = new byte[16 * 1024];
             int count;
             while ((count = input.read(buffer)) != -1) {

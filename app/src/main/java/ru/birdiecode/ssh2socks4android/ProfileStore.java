@@ -34,6 +34,19 @@ final class ProfileStore {
                 p.sshPort = json.optInt("sshPort", 22);
                 p.username = json.optString("username");
                 p.localPort = json.optInt("localPort", 1080);
+                p.connectionMode = json.optString("connectionMode", "SOCKS5");
+                p.vpnIpv4 = json.optBoolean("vpnIpv4", true);
+                p.vpnIpv6 = json.optBoolean("vpnIpv6", false);
+                p.vpnIpv6Prefix = json.optString("vpnIpv6Prefix", "");
+                p.vpnMtu = json.optInt("vpnMtu", 1400);
+                p.vpnDnsServers = json.optString("vpnDnsServers", "1.1.1.1");
+                p.vpnFullTunnel = json.optBoolean("vpnFullTunnel", true);
+                p.vpnRoutes = json.optString("vpnRoutes", "");
+                p.vpnRoutePriority = json.optInt("vpnRoutePriority", 0);
+                p.vpnPrimary = json.optBoolean("vpnPrimary", false);
+                p.vpnFailover = json.optBoolean("vpnFailover", false);
+                p.vpnAutoReconnect = json.optBoolean("vpnAutoReconnect", true);
+                p.vpnExternalInterface = json.optString("vpnExternalInterface", "");
                 p.keyId = json.optString("keyId");
                 p.encryptedKey = json.optString("encryptedKey");
                 p.encryptedPassword = json.optString("encryptedPassword");
@@ -146,10 +159,29 @@ final class ProfileStore {
 
     static synchronized void setStatus(Context context, String profileId, String status, String detail) {
         prefs(context).edit()
+                .putString("status." + profileId, status == null ? "IDLE" : status)
+                .putString("detail." + profileId, detail == null ? "" : detail)
                 .putString(STATUS_PROFILE, profileId == null ? "" : profileId)
                 .putString(STATUS, status == null ? "IDLE" : status)
                 .putString(STATUS_DETAIL, detail == null ? "" : detail)
                 .apply();
+    }
+
+    static String status(Context context, String profileId) {
+        return prefs(context).getString("status." + profileId, "IDLE");
+    }
+
+    static String statusDetail(Context context, String profileId) {
+        return prefs(context).getString("detail." + profileId, "");
+    }
+
+    static synchronized void resetConnectionStatuses(Context context) {
+        SharedPreferences.Editor editor = prefs(context).edit();
+        for (String key : prefs(context).getAll().keySet()) {
+            if (key.startsWith("status.") || key.startsWith("detail.")) editor.remove(key);
+        }
+        editor.putString(STATUS, "IDLE").putString(STATUS_PROFILE, "")
+                .putString(STATUS_DETAIL, "").putString(PENDING_FINGERPRINT, "").apply();
     }
 
     static String status(Context context) {
@@ -181,6 +213,19 @@ final class ProfileStore {
             json.put("sshPort", p.sshPort);
             json.put("username", p.username);
             json.put("localPort", p.localPort);
+            json.put("connectionMode", p.connectionMode);
+            json.put("vpnIpv4", p.vpnIpv4);
+            json.put("vpnIpv6", p.vpnIpv6);
+            json.put("vpnIpv6Prefix", p.vpnIpv6Prefix);
+            json.put("vpnMtu", p.vpnMtu);
+            json.put("vpnDnsServers", p.vpnDnsServers);
+            json.put("vpnFullTunnel", p.vpnFullTunnel);
+            json.put("vpnRoutes", p.vpnRoutes);
+            json.put("vpnRoutePriority", p.vpnRoutePriority);
+            json.put("vpnPrimary", p.vpnPrimary);
+            json.put("vpnFailover", p.vpnFailover);
+            json.put("vpnAutoReconnect", p.vpnAutoReconnect);
+            json.put("vpnExternalInterface", p.vpnExternalInterface);
             json.put("keyId", p.keyId);
             json.put("encryptedKey", p.encryptedKey);
             json.put("encryptedPassword", p.encryptedPassword);

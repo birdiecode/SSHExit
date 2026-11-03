@@ -12,6 +12,7 @@ import android.content.res.Configuration;
 import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -23,6 +24,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
@@ -51,6 +54,7 @@ import java.util.Map;
 public final class MainActivity extends Activity {
     private static final int REQUEST_KEY = 100;
     private static final int REQUEST_NOTIFICATIONS = 101;
+    private static final int REQUEST_VPN = 102;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, TextView> rowStatuses = new HashMap<>();
@@ -66,14 +70,22 @@ public final class MainActivity extends Activity {
     private FrameLayout contentHost;
     private BottomNavigationView bottomNavigation;
     private TextView overallStatus;
+    private ScrollView logsScroll;
+    private TextView logsText;
+    private TextView verbosityLabel;
+    private int logVerbosity = AppLog.INFO;
+    private long renderedLogRevision = -1;
+
     private byte[] pendingVaultKey;
     private String pendingVaultKeyName = "";
     private String promptedFingerprint = "";
     private String promptedPasswordRequest = "";
+    private String pendingVpnProfileId = "";
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             refreshStatuses();
+            refreshLogs();
             handler.postDelayed(this, 1000);
         }
     };
@@ -96,9 +108,9 @@ public final class MainActivity extends Activity {
         });
         page.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
 
-        TextView title = text("SSH2SOCKS", 23, 0xFF152033, true);
+        TextView title = text(getString(R.string.app_name), 23, 0xFF152033, true);
         page.addView(title);
-        TextView subtitle = text("SSH-туннели · локальный SOCKS5", 14, 0xFF65728A, false);
+        TextView subtitle = text("SSH VPN · SOCKS5", 14, 0xFF65728A, false);
         LinearLayout.LayoutParams subtitleParams = params(-1, -2);
         subtitleParams.topMargin = dp(2);
         page.addView(subtitle, subtitleParams);
@@ -160,9 +172,13 @@ public final class MainActivity extends Activity {
         contentHost.addView(keysPage);
         keysPage.setVisibility(View.GONE);
 
+        contentHost.addView(createLogsPage());
+        contentHost.getChildAt(2).setVisibility(View.GONE);
+
         bottomNavigation = new BottomNavigationView(this);
         bottomNavigation.getMenu().add(0, 1, 0, "Хосты").setIcon(R.drawable.ic_hosts);
         bottomNavigation.getMenu().add(0, 2, 1, "Ключи").setIcon(R.drawable.ic_keys);
+        bottomNavigation.getMenu().add(0, 3, 2, "Логи").setIcon(R.drawable.ic_logs);
         bottomNavigation.setLabelVisibilityMode(BottomNavigationView.LABEL_VISIBILITY_LABELED);
         bottomNavigation.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
         bottomNavigation.setOnItemSelectedListener(item -> {
@@ -174,13 +190,104 @@ public final class MainActivity extends Activity {
         setContentView(page);
         renderProfiles();
         renderKeyList();
+        if (savedInstanceState != null) bottomNavigation.setSelectedItemId(savedInstanceState.getInt("selectedTab", 1));
     }
 
     private void switchTab(int tabId) {
         if (contentHost == null || contentHost.getChildCount() < 2) return;
         contentHost.getChildAt(0).setVisibility(tabId == 1 ? View.VISIBLE : View.GONE);
         contentHost.getChildAt(1).setVisibility(tabId == 2 ? View.VISIBLE : View.GONE);
+        contentHost.getChildAt(2).setVisibility(tabId == 3 ? View.VISIBLE : View.GONE);
         if (tabId == 2) renderKeyList();
+        if (tabId == 3) refreshLogs();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        if (bottomNavigation != null) out.putInt("selectedTab", bottomNavigation.getSelectedItemId());
+    }
+
+    private View createLogsPage() {
+        logVerbosity = Math.max(0, Math.min(4,
+                getSharedPreferences("diagnostics", MODE_PRIVATE).getInt("verbosity", AppLog.INFO)));
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        verbosityLabel = text("", 14, 0xFF33415C, true);
+        page.addView(verbosityLabel, params(-1, -2));
+        updateVerbosityLabel();
+
+        com.google.android.material.slider.Slider verbosity = new com.google.android.material.slider.Slider(this);
+        verbosity.setValueFrom(0);
+        verbosity.setValueTo(4);
+        verbosity.setStepSize(1);
+        verbosity.setValue(logVerbosity);
+        verbosity.setContentDescription("Подробность логов");
+        verbosity.setLabelFormatter(value -> verbosityName(Math.round(value)));
+        verbosity.addOnChangeListener((slider, value, fromUser) -> {
+            logVerbosity = Math.round(value);
+            getSharedPreferences("diagnostics", MODE_PRIVATE).edit().putInt("verbosity", logVerbosity).apply();
+            renderedLogRevision = -1;
+            updateVerbosityLabel();
+            refreshLogs();
+        });
+        page.addView(verbosity, params(-1, -2));
+        TextView hint = text("0 — ошибки · 4 — максимум. Последние 1000 событий текущего запуска приложения.",
+                12, 0xFF65728A, false);
+        page.addView(hint, params(-1, -2));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        MaterialButton copy = makeButton("Копировать", false);
+        MaterialButton clear = makeButton("Очистить", false);
+        actions.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+        LinearLayout.LayoutParams clearParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        clearParams.leftMargin = dp(8);
+        actions.addView(clear, clearParams);
+        page.addView(actions, params(-1, -2));
+        copy.setOnClickListener(view -> {
+            String journal = AppLog.INSTANCE.render(logVerbosity);
+            android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.app_name) + " — логи", journal));
+                Toast.makeText(this, "Логи скопированы", Toast.LENGTH_SHORT).show();
+            }
+        });
+        clear.setOnClickListener(view -> { AppLog.INSTANCE.clear(); refreshLogs(); });
+
+        logsScroll = new ScrollView(this);
+        logsScroll.setFillViewport(true);
+        logsScroll.setClipToPadding(false);
+        logsText = text("", 12, 0xFF33415C, false);
+        logsText.setTypeface(Typeface.MONOSPACE);
+        logsText.setTextIsSelectable(true);
+        logsText.setPadding(dp(8), dp(8), dp(8), dp(16));
+        logsScroll.addView(logsText, new ScrollView.LayoutParams(-1, -2));
+        page.addView(logsScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        return page;
+    }
+
+    private String verbosityName(int level) {
+        return new String[]{"Ошибки", "Предупреждения", "События", "Отладка", "Трассировка"}[level];
+    }
+
+    private void updateVerbosityLabel() {
+        verbosityLabel.setText("Подробность: " + logVerbosity + " — " + verbosityName(logVerbosity));
+    }
+
+    private void refreshLogs() {
+        if (logsText == null || bottomNavigation == null || bottomNavigation.getSelectedItemId() != 3) return;
+        long revision = AppLog.INSTANCE.revision();
+        if (revision == renderedLogRevision) return;
+        renderedLogRevision = revision;
+        boolean atBottom = logsText.getHeight() <= logsScroll.getHeight() + logsScroll.getScrollY() + dp(40);
+        int previousY = logsScroll.getScrollY();
+        String journal = AppLog.INSTANCE.render(logVerbosity);
+        logsText.setText(journal.isEmpty() ? "Нет событий на выбранном уровне подробности." : journal);
+        logsScroll.post(() -> {
+            if (atBottom) logsScroll.fullScroll(View.FOCUS_DOWN);
+            else logsScroll.scrollTo(0, previousY);
+        });
     }
 
     private void launchKeyPicker() {
@@ -287,6 +394,8 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams socksParams = params(-1, -2);
             socksParams.topMargin = dp(9);
             content.addView(socksRow, socksParams);
+            socksRow.setVisibility(("SOCKS5".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode))
+                    ? View.VISIBLE : View.GONE);
             TextView socksLabel = text("SOCKS5", 12, 0xFF65728A, true);
             socksRow.addView(socksLabel);
             TextView socksPort = text("127.0.0.1:" + profile.localPort, 13, 0xFF2457D6, true);
@@ -364,34 +473,24 @@ public final class MainActivity extends Activity {
 
     private void refreshStatuses() {
         if (overallStatus == null) return;
-        String status = ProfileStore.status(this);
-        String profileId = ProfileStore.statusProfile(this);
-        String detail = ProfileStore.statusDetail(this);
-        Profile active = ProfileStore.get(this, profileId);
-
-        if ("CONNECTED".equals(status)) {
-            overallStatus.setText("Подключено  ·  SOCKS5 127.0.0.1:" + (active == null ? "" : active.localPort));
-            overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
-        } else if ("CONNECTING".equals(status)) {
-            overallStatus.setText("Подключение…");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
-        } else if ("NEEDS_TRUST".equals(status)) {
-            overallStatus.setText("Нужно подтвердить fingerprint сервера");
-            overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
-            askToTrust(profileId, detail);
-        } else if ("NEEDS_PASSWORD".equals(status)) {
-            overallStatus.setText("Требуется пароль SSH");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
-            askForPassword(profileId, detail);
-        } else if ("ERROR".equals(status)) {
-            overallStatus.setText("Не удалось подключиться  ·  описание ошибки в карточке хоста");
-            overallStatus.setTextColor(0xFFB42318);
-        } else {
-            overallStatus.setText("Нет активного подключения");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
+        int connected = 0, pending = 0;
+        String requestId = "", requestState = "", requestDetail = "";
+        for (Profile p : ProfileStore.all(this)) {
+            String state = ProfileStore.status(this, p.id);
+            if ("CONNECTED".equals(state)) connected++;
+            else if (!"IDLE".equals(state) && !"ERROR".equals(state)) pending++;
+            if (requestId.isEmpty() && ("NEEDS_TRUST".equals(state) || "NEEDS_PASSWORD".equals(state))) {
+                requestId = p.id; requestState = state; requestDetail = ProfileStore.statusDetail(this, p.id);
+            }
         }
+        overallStatus.setText("Подключено: " + connected + (pending > 0 ? " · В процессе: " + pending : ""));
+        overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
+        if ("NEEDS_TRUST".equals(requestState)) askToTrust(requestId, requestDetail);
+        else if ("NEEDS_PASSWORD".equals(requestState)) askForPassword(requestId, requestDetail);
 
         for (String id : rowStatuses.keySet()) {
+            String status = ProfileStore.status(this, id);
+            String detail = ProfileStore.statusDetail(this, id);
             TextView row = rowStatuses.get(id);
             Profile rowProfile = ProfileStore.get(this, id);
             TextView fingerprint = rowFingerprints.get(id);
@@ -399,10 +498,10 @@ public final class MainActivity extends Activity {
             View errorPanel = rowErrorPanels.get(id);
             TextView errorSummary = rowErrorSummaries.get(id);
             TextView technicalDetails = rowTechnicalDetails.get(id);
-            boolean showError = id.equals(profileId) && "ERROR".equals(status);
+            boolean showError = "ERROR".equals(status) || "RECONNECTING".equals(status);
             boolean errorWasVisible = errorPanel != null && errorPanel.getVisibility() == View.VISIBLE;
             if (errorPanel != null) errorPanel.setVisibility(showError ? View.VISIBLE : View.GONE);
-            if (showError && !errorWasVisible && errorPanel != null) {
+            if ("ERROR".equals(status) && !errorWasVisible && errorPanel != null) {
                 View panel = errorPanel;
                 panel.post(() -> {
                     if (panel.getVisibility() != View.VISIBLE) return;
@@ -417,7 +516,7 @@ public final class MainActivity extends Activity {
             }
             if (row == null) continue;
 
-            if (!id.equals(profileId)) {
+            if ("IDLE".equals(status)) {
                 boolean hasFingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
                         && !rowProfile.observedFingerprint.isEmpty();
                 setStatusChip(row, hasFingerprintError ? "Fingerprint не совпал" : "Отключено",
@@ -435,7 +534,7 @@ public final class MainActivity extends Activity {
             } else if ("NEEDS_PASSWORD".equals(status)) {
                 setStatusChip(row, "Ожидает пароль", "CONNECTING");
             } else {
-                setStatusChip(row, "Отключено", "IDLE");
+                setStatusChip(row, "RECONNECTING".equals(status) ? "Переподключение…" : "Подготовка…", "CONNECTING");
             }
         }
     }
@@ -492,7 +591,10 @@ public final class MainActivity extends Activity {
         chip.setBackground(background);
     }
 
+    private boolean connectionPromptOpen;
+
     private void askToTrust(String profileId, String fingerprint) {
+        if (connectionPromptOpen) return;
         if (fingerprint == null || fingerprint.isEmpty() || fingerprint.equals(promptedFingerprint)) return;
         promptedFingerprint = fingerprint;
         Profile profile = ProfileStore.get(this, profileId);
@@ -509,6 +611,7 @@ public final class MainActivity extends Activity {
             shownFingerprint = fingerprint.substring(fingerprint.indexOf(':') + 1);
         }
         String server = node.username + "@" + node.host + ":" + node.sshPort;
+        connectionPromptOpen = true;
         new AlertDialog.Builder(this)
                 .setTitle("Подтвердите SSH-сервер")
                 .setMessage("Сервер: " + server
@@ -522,10 +625,11 @@ public final class MainActivity extends Activity {
                     promptedFingerprint = "";
                     startTunnelAction(SshTunnelService.ACTION_STOP, profileId);
                 })
-                .show();
+                .show().setOnDismissListener(dialog -> connectionPromptOpen = false);
     }
 
     private void askForPassword(String targetId, String request) {
+        if (connectionPromptOpen) return;
         if (request == null || !request.startsWith("NODE:") || request.equals(promptedPasswordRequest)) return;
         String nodeId = request.substring("NODE:".length());
         Profile node = ProfileStore.get(this, nodeId);
@@ -533,6 +637,7 @@ public final class MainActivity extends Activity {
         promptedPasswordRequest = request;
         EditText password = input("SSH-пароль для " + node.username + "@" + node.host, "",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        connectionPromptOpen = true;
         new AlertDialog.Builder(this)
                 .setTitle("Требуется пароль SSH")
                 .setMessage("Пароль запрашивается для " + node.username + "@" + node.host + ":" + node.sshPort
@@ -561,17 +666,32 @@ public final class MainActivity extends Activity {
                     } catch (Exception e) {
                         Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show();
                     }
-                }).show();
+                }).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
     }
 
     private void toggle(Profile profile) {
-        String status = ProfileStore.status(this);
-        String activeId = ProfileStore.statusProfile(this);
-        if (profile.id.equals(activeId) && ("CONNECTED".equals(status)
-                || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status))) {
+        String status = ProfileStore.status(this, profile.id);
+        if (!"IDLE".equals(status) && !"ERROR".equals(status)) {
             startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
+        } else if ("VPN".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode)) {
+            requestVpnPermissionAndConnect(profile);
         } else {
             startTunnelAction(SshTunnelService.ACTION_CONNECT, profile.id);
+        }
+    }
+
+    private void requestVpnPermissionAndConnect(Profile profile) {
+        Intent consent = VpnService.prepare(this);
+        if (consent == null) {
+            startTunnelAction(SshTunnelService.ACTION_CONNECT, profile.id);
+            return;
+        }
+        pendingVpnProfileId = profile.id;
+        try {
+            startActivityForResult(consent, REQUEST_VPN);
+        } catch (Exception e) {
+            pendingVpnProfileId = "";
+            Toast.makeText(this, "Не удалось запросить разрешение на VPN", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -602,7 +722,7 @@ public final class MainActivity extends Activity {
                 .setMessage(message.toString())
                 .setNegativeButton("Отмена", null)
                 .setPositiveButton("Удалить", (dialog, which) -> {
-                    if (profile.id.equals(ProfileStore.statusProfile(this))) {
+                    if (!"IDLE".equals(ProfileStore.status(this, profile.id))) {
                         startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     }
                     ProfileStore.delete(this, profile.id);
@@ -624,9 +744,9 @@ public final class MainActivity extends Activity {
             view.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
             return;
         }
-        String pending = ProfileStore.statusDetail(this);
+        String pending = ProfileStore.statusDetail(this, profile.id);
         String nodePrefix = "NODE:" + profile.id + ":";
-        if ("NEEDS_TRUST".equals(ProfileStore.status(this)) && pending != null && pending.startsWith(nodePrefix)) {
+        if ("NEEDS_TRUST".equals(ProfileStore.status(this, profile.id)) && pending != null && pending.startsWith(nodePrefix)) {
             view.setText("Fingerprint ожидает подтверждения\n" + pending.substring(nodePrefix.length()));
             view.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
         } else {
@@ -643,6 +763,7 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("Удалить", (dialog, which) -> {
                     Profile stored = ProfileStore.get(this, profile.id);
                     if (stored == null) return;
+                    startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     stored.hostFingerprint = "";
                     stored.observedFingerprint = "";
                     ProfileStore.save(this, stored);
@@ -711,7 +832,70 @@ public final class MainActivity extends Activity {
         route.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
         route.setSelection(selectedIndex);
         form.addView(route);
+
+        TextView modeTitle = text("Режим подключения", 16, 0xFF152033, true);
+        LinearLayout.LayoutParams modeTitleParams = params(-1, -2);
+        modeTitleParams.topMargin = dp(16);
+        form.addView(modeTitle, modeTitleParams);
+        String[] modeValues = {"SOCKS5", "VPN", "BOTH"};
+        String[] modeLabels = {"SOCKS5", "VPN (SSH TUN)", "SOCKS5 + VPN"};
+        Spinner mode = new Spinner(this);
+        mode.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, modeLabels));
+        int modeIndex = 0;
+        for (int i = 0; i < modeValues.length; i++) {
+            if (modeValues[i].equals(profile.connectionMode)) modeIndex = i;
+        }
+        mode.setSelection(modeIndex);
+        form.addView(mode);
         form.addView(localPort);
+        localPort.setVisibility(modeIndex == 1 ? View.GONE : View.VISIBLE);
+
+        LinearLayout vpnSettings = new LinearLayout(this);
+        vpnSettings.setOrientation(LinearLayout.VERTICAL);
+        vpnSettings.setPadding(0, dp(8), 0, dp(4));
+        CheckBox vpnIpv4 = checkBox("IPv4", profile.vpnIpv4);
+        CheckBox vpnIpv6 = checkBox("IPv6", profile.vpnIpv6);
+        EditText vpnIpv6Prefix = input("Маршрутизируемый IPv6-префикс сервера (например, 2001:db8:abcd::/64)",
+                profile.vpnIpv6Prefix, InputType.TYPE_CLASS_TEXT);
+        CheckBox vpnFullTunnel = checkBox("Полный туннель", profile.vpnFullTunnel);
+        CheckBox vpnPrimary = checkBox("Использовать как основной VPN", profile.vpnPrimary);
+        CheckBox vpnFailover = checkBox("Разрешить резервное переключение", profile.vpnFailover);
+        CheckBox vpnReconnect = checkBox("Автоматически переподключаться", profile.vpnAutoReconnect);
+        EditText vpnMtu = input("MTU (576–9000)", String.valueOf(profile.vpnMtu), InputType.TYPE_CLASS_NUMBER);
+        EditText vpnDns = input("DNS-серверы через запятую", profile.vpnDnsServers, InputType.TYPE_CLASS_TEXT);
+        EditText vpnRoutes = new EditText(this);
+        vpnRoutes.setHint("Маршруты CIDR, по одному на строку (для split tunneling)");
+        vpnRoutes.setText(profile.vpnRoutes);
+        vpnRoutes.setMinLines(2);
+        vpnRoutes.setMaxLines(5);
+        vpnRoutes.setGravity(Gravity.TOP | Gravity.START);
+        vpnRoutes.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        EditText vpnPriority = input("Приоритет маршрута", String.valueOf(profile.vpnRoutePriority),
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        EditText vpnInterface = input("Внешний интерфейс сервера (пусто — автоматически)",
+                profile.vpnExternalInterface, InputType.TYPE_CLASS_TEXT);
+        vpnSettings.addView(vpnIpv4);
+        vpnSettings.addView(vpnIpv6);
+        vpnSettings.addView(vpnIpv6Prefix);
+        vpnSettings.addView(vpnFullTunnel);
+        vpnSettings.addView(vpnMtu);
+        vpnSettings.addView(vpnDns);
+        vpnSettings.addView(vpnRoutes);
+        vpnSettings.addView(vpnPriority);
+        vpnSettings.addView(vpnPrimary);
+        vpnSettings.addView(vpnFailover);
+        vpnSettings.addView(vpnReconnect);
+        vpnSettings.addView(vpnInterface);
+        form.addView(vpnSettings);
+        vpnSettings.setVisibility(modeIndex == 0 ? View.GONE : View.VISIBLE);
+        mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                vpnSettings.setVisibility(position == 0 ? View.GONE : View.VISIBLE);
+                localPort.setVisibility(position == 1 ? View.GONE : View.VISIBLE);
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -728,12 +912,47 @@ public final class MainActivity extends Activity {
                 }
                 String userValue = username.getText().toString().trim();
                 int sshPortValue = parsePort(sshPort.getText().toString(), "SSH-порт");
-                int socksPortValue = parsePort(localPort.getText().toString(), "SOCKS5-порт");
+                boolean socksEnabled = mode.getSelectedItemPosition() != 1;
+                int socksPortValue = socksEnabled
+                        ? parsePort(localPort.getText().toString(), "SOCKS5-порт") : profile.localPort;
                 if (hostValue.isEmpty() || userValue.isEmpty()) {
                     throw new IllegalArgumentException("Укажите адрес сервера и имя пользователя");
                 }
-                if (socksPortValue < 1024) throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
+                if (socksEnabled && socksPortValue < 1024)
+                    throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
 
+                int vpnMtuValue = parsePort(vpnMtu.getText().toString(), "MTU");
+                if (vpnMtuValue < 576 || vpnMtuValue > 9000) {
+                    throw new IllegalArgumentException("MTU должен быть в диапазоне 576–9000");
+                }
+                if (!vpnIpv4.isChecked() && !vpnIpv6.isChecked()) {
+                    throw new IllegalArgumentException("Включите IPv4, IPv6 или оба протокола");
+                }
+                int vpnPriorityValue = Integer.parseInt(vpnPriority.getText().toString().trim());
+                if (vpnPriorityValue < -1000 || vpnPriorityValue > 1000) {
+                    throw new IllegalArgumentException("Приоритет должен быть от -1000 до 1000");
+                }
+                String ipv6PrefixValue = vpnIpv6Prefix.getText().toString().trim();
+                if (!ipv6PrefixValue.isEmpty()) {
+                    String normalizedIpv6Prefix = VpnRouteTable.normalizePrefix(ipv6PrefixValue);
+                    if (!normalizedIpv6Prefix.contains(":")
+                            || Integer.parseInt(normalizedIpv6Prefix.substring(normalizedIpv6Prefix.lastIndexOf("/") + 1)) > 64) {
+                        throw new IllegalArgumentException("Для IPv6 укажите маршрутизируемый префикс не короче /64");
+                    }
+                    ipv6PrefixValue = normalizedIpv6Prefix;
+                }
+                if (mode.getSelectedItemPosition() != 0 && vpnIpv6.isChecked()
+                        && vpnFullTunnel.isChecked() && ipv6PrefixValue.isEmpty()) {
+                    throw new IllegalArgumentException("Для полного IPv6-туннеля нужен выделенный маршрутизируемый префикс");
+                }
+                String interfaceValue = vpnInterface.getText().toString().trim();
+                if (!interfaceValue.isEmpty() && !interfaceValue.matches("[A-Za-z0-9_.-]{1,15}")) {
+                    throw new IllegalArgumentException("Недопустимое имя сетевого интерфейса");
+                }
+                String routeText = vpnRoutes.getText().toString().trim();
+                if (!vpnFullTunnel.isChecked() && mode.getSelectedItemPosition() != 0 && routeText.isEmpty()) {
+                    throw new IllegalArgumentException("Для split tunneling укажите хотя бы один маршрут CIDR");
+                }
                 Profile jump = options.get(route.getSelectedItemPosition());
                 String jumpId = jump == null ? "" : jump.id;
                 if (!jumpId.isEmpty() && wouldCreateCycle(profile.id, jumpId)) {
@@ -745,6 +964,19 @@ public final class MainActivity extends Activity {
                 profile.username = userValue;
                 profile.sshPort = sshPortValue;
                 profile.localPort = socksPortValue;
+                profile.connectionMode = modeValues[mode.getSelectedItemPosition()];
+                profile.vpnIpv4 = vpnIpv4.isChecked();
+                profile.vpnIpv6 = vpnIpv6.isChecked();
+                profile.vpnIpv6Prefix = ipv6PrefixValue;
+                profile.vpnMtu = vpnMtuValue;
+                profile.vpnDnsServers = vpnDns.getText().toString().trim();
+                profile.vpnFullTunnel = vpnFullTunnel.isChecked();
+                profile.vpnRoutes = routeText;
+                profile.vpnRoutePriority = vpnPriorityValue;
+                profile.vpnPrimary = vpnPrimary.isChecked();
+                profile.vpnFailover = vpnFailover.isChecked();
+                profile.vpnAutoReconnect = vpnReconnect.isChecked();
+                profile.vpnExternalInterface = interfaceValue;
                 profile.jumpProfileId = jumpId;
                 profile.jumpHost = "";
                 profile.jumpUsername = "";
@@ -758,6 +990,7 @@ public final class MainActivity extends Activity {
                     profile.encryptedPassword = KeyVault.encrypt(enteredPassword.getBytes(StandardCharsets.UTF_8));
                 }
 
+                startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                 ProfileStore.save(this, profile);
                 dialog.dismiss();
                 renderProfiles();
@@ -996,6 +1229,19 @@ public final class MainActivity extends Activity {
     private Profile copy(Profile source) {
         Profile p = new Profile(source.name, source.host, source.sshPort, source.username, source.localPort);
         p.id = source.id;
+        p.connectionMode = source.connectionMode;
+        p.vpnIpv4 = source.vpnIpv4;
+        p.vpnIpv6 = source.vpnIpv6;
+        p.vpnIpv6Prefix = source.vpnIpv6Prefix;
+        p.vpnMtu = source.vpnMtu;
+        p.vpnDnsServers = source.vpnDnsServers;
+        p.vpnFullTunnel = source.vpnFullTunnel;
+        p.vpnRoutes = source.vpnRoutes;
+        p.vpnRoutePriority = source.vpnRoutePriority;
+        p.vpnPrimary = source.vpnPrimary;
+        p.vpnFailover = source.vpnFailover;
+        p.vpnAutoReconnect = source.vpnAutoReconnect;
+        p.vpnExternalInterface = source.vpnExternalInterface;
         p.jumpProfileId = source.jumpProfileId;
         p.keyId = source.keyId;
         p.encryptedKey = source.encryptedKey;
@@ -1011,6 +1257,14 @@ public final class MainActivity extends Activity {
         return p;
     }
 
+    private CheckBox checkBox(String label, boolean checked) {
+        CheckBox box = new CheckBox(this);
+        box.setText(label);
+        box.setChecked(checked);
+        box.setMinHeight(dp(48));
+        return box;
+    }
+
     private EditText input(String hint, String value, int inputType) {
         EditText edit = new EditText(this);
         edit.setSingleLine(true);
@@ -1023,6 +1277,16 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_VPN) {
+            String profileId = pendingVpnProfileId;
+            pendingVpnProfileId = "";
+            if (resultCode == RESULT_OK && !profileId.isEmpty()) {
+                startTunnelAction(SshTunnelService.ACTION_CONNECT, profileId);
+            } else if (!profileId.isEmpty()) {
+                Toast.makeText(this, "Разрешение на VPN не предоставлено", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode != REQUEST_KEY || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         try (InputStream input = getContentResolver().openInputStream(uri);
