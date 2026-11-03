@@ -6,7 +6,7 @@ import java.util.EnumSet;
 final class ConnectionStateMachine {
     enum State {
         DISCONNECTED, CONNECTING, AUTHENTICATING, NEEDS_PASSWORD, NEEDS_TRUST,
-        PREPARING_TUN, CONFIGURING_SERVER, CONNECTED, RECONNECTING, DISCONNECTING, ERROR
+        NEEDS_SERVER_CONFIG, PREPARING_TUN, CONFIGURING_SERVER, CONNECTED, RECONNECTING, DISCONNECTING, ERROR
     }
     private State state = State.DISCONNECTED;
 
@@ -27,7 +27,9 @@ final class ConnectionStateMachine {
                     allowed = next == State.AUTHENTICATING; break;
                 case AUTHENTICATING:
                     allowed = EnumSet.of(State.NEEDS_PASSWORD, State.NEEDS_TRUST,
-                            State.PREPARING_TUN, State.CONNECTED).contains(next); break;
+                            State.NEEDS_SERVER_CONFIG, State.PREPARING_TUN, State.CONNECTED).contains(next); break;
+                case NEEDS_SERVER_CONFIG:
+                    allowed = next == State.PREPARING_TUN; break;
                 case PREPARING_TUN:
                     allowed = next == State.CONFIGURING_SERVER; break;
                 case CONFIGURING_SERVER:
