@@ -239,6 +239,245 @@ public final class SshTunnelService extends VpnService {
         }
     }
 
+    private void establishVpnInterface(Profile profile) throws Exception {
+        VpnService.prepare(this);
+        Builder builder = new Builder()
+                .setSession(profile.name == null || profile.name.isEmpty() ? profile.host : profile.name)
+                .setMtu(profile.vpnMtu)
+                .addDisallowedApplication(getPackageName());
+
+        if (profile.vpnIpv4) {
+            builder.addAddress(VPN_IPV4_CLIENT, 32);
+            if (profile.vpnFullTunnel) builder.addRoute("0.0.0.0", 0);
+        }
+        String[] ipv6 = vpnIpv6Addresses(profile);
+        if (profile.vpnIpv6) {
+            builder.addAddress(ipv6[1], 128);
+            if (profile.vpnFullTunnel) builder.addRoute("::", 0);
+        }
+        if (!profile.vpnFullTunnel) {
+            int count = 0;
+            for (String raw : profile.vpnRoutes.split("\\r?\\n")) {
+                String route = raw.trim();
+                if (route.isEmpty()) continue;
+                String canonical = VpnRouteTable.normalizePrefix(route);
+                int slash = canonical.lastIndexOf('/');
+                builder.addRoute(canonical.substring(0, slash), Integer.parseInt(canonical.substring(slash + 1)));
+                count++;
+            }
+            if (count == 0) throw new IllegalArgumentException("Для split tunneling не заданы маршруты");
+        }
+        if (profile.vpnDnsServers != null && !profile.vpnDnsServers.trim().isEmpty()) {
+            for (String raw : profile.vpnDnsServers.split(",")) {
+                String address = raw.trim();
+                if (address.isEmpty()) continue;
+                if (address.indexOf(':') < 0 && !address.matches("[0-9.]+")) {
+                    throw new IllegalArgumentException("DNS должен быть указан как IPv4 или IPv6 адрес");
+                }
+                builder.addDnsServer(java.net.InetAddress.getByName(address));
+            }
+        }
+        ParcelFileDescriptor established = builder.establish();
+        if (established == null) throw new IllegalStateException("Android не создал VPN-интерфейс");
+        vpnInterface = established;
+    }
+
+    private String[] vpnIpv6Addresses(Profile profile) throws Exception {
+        if (!profile.vpnIpv6Prefix.isEmpty()) {
+            String canonical = VpnRouteTable.normalizePrefix(profile.vpnIpv6Prefix);
+            if (!canonical.contains(":")) throw new IllegalArgumentException("Префикс VPN должен быть IPv6");
+            int prefix = Integer.parseInt(canonical.substring(canonical.lastIndexOf('/') + 1));
+            if (prefix > 64) throw new IllegalArgumentException("IPv6-префикс должен быть /64 или шире");
+            byte[] network = java.net.InetAddress.getByName(canonical.substring(0, canonical.lastIndexOf('/'))).getAddress();
+            network[15] = 1;
+            String server = java.net.InetAddress.getByAddress(network).getHostAddress();
+            network[15] = 2;
+            String client = java.net.InetAddress.getByAddress(network).getHostAddress();
+            return new String[]{server, client};
+        }
+        return new String[]{"fd53:5353:5353::1", "fd53:5353:5353::2"};
+    }
+
+    private SocketFactory protectedSocketFactory() {
+        return new SocketFactory() {
+            @Override public Socket createSocket(String host, int port) throws IOException, UnknownHostException {
+                Socket socket = new Socket();
+                if (!protect(socket)) {
+                    try { socket.close(); } catch (IOException ignored) {}
+                    throw new IOException("Android не смог исключить SSH-сокет из VPN");
+                }
+                socket.connect(new InetSocketAddress(host, port), 20_000);
+                return socket;
+            }
+            @Override public InputStream getInputStream(Socket socket) throws IOException {
+                return socket.getInputStream();
+            }
+            @Override public OutputStream getOutputStream(Socket socket) throws IOException {
+                return socket.getOutputStream();
+            }
+        };
+    }
+
+    private void startVpnTunnel(Profile profile, Session endpoint) throws Exception {
+        ParcelFileDescriptor descriptor = vpnInterface;
+        if (descriptor == null) throw new IllegalStateException("VPN-интерфейс не создан");
+        activeTunUnit = 100000000 + new Random().nextInt(100000000);
+        OpenSshTunChannel tun = new OpenSshTunChannel(activeTunUnit);
+        int mtu = profile.vpnMtu > 0 ? profile.vpnMtu : DEFAULT_VPN_MTU;
+        tun.setInputStream(TunPacketStreams.addOpenSshFraming(
+                new FileInputStream(descriptor.getFileDescriptor()), mtu), true);
+        tun.setOutputStream(TunPacketStreams.removeOpenSshFraming(
+                new FileOutputStream(descriptor.getFileDescriptor()), mtu), true);
+        tun.openOn(endpoint, 20_000);
+        activeTun = tun;
+        startServerTunConfig(endpoint, profile, mtu, activeTunUnit);
+    }
+
+    private void startServerTunConfig(Session endpoint, Profile profile, int mtu, int unit) throws Exception {
+        String interfaceName = "tun" + unit;
+        String table = "ssh2socks_" + shortProfileToken(profile.id);
+        activeVpnTable = table;
+        String[] ipv6 = vpnIpv6Addresses(profile);
+        String script = buildServerTunScript(profile, interfaceName, table, mtu, ipv6);
+        ChannelExec monitor = (ChannelExec) endpoint.openChannel("exec");
+        ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        monitor.setErrStream(stderr);
+        monitor.setCommand("sh -c " + shellQuote(script));
+        InputStream stdout = monitor.getInputStream();
+        monitor.connect(20_000);
+        StringBuilder response = new StringBuilder();
+        long deadline = System.currentTimeMillis() + 20_000;
+        byte[] buffer = new byte[1024];
+        boolean ready = false;
+        while (System.currentTimeMillis() < deadline) {
+            while (stdout.available() > 0) {
+                int count = stdout.read(buffer);
+                if (count < 0) break;
+                response.append(new String(buffer, 0, count, StandardCharsets.UTF_8));
+                if (response.indexOf("SSH2SOCKS_TUN_READY") >= 0) {
+                    ready = true;
+                    break;
+                }
+            }
+            if (ready) break;
+            if (monitor.isClosed()) break;
+            Thread.sleep(50);
+        }
+        if (!ready) {
+            String diagnostic = stderr.toString(StandardCharsets.UTF_8.name()).trim();
+            monitor.disconnect();
+            String details = response.toString().trim();
+            throw new IllegalStateException("Сервер не смог настроить SSH TUN"
+                    + (details.isEmpty() ? "" : ": " + details)
+                    + (diagnostic.isEmpty() ? "" : " · " + diagnostic));
+        }
+        serverConfigChannel = monitor;
+    }
+
+    private String buildServerTunScript(Profile profile, String interfaceName, String table,
+                                        int mtu, String[] ipv6) {
+        String wan = profile.vpnExternalInterface == null ? "" : profile.vpnExternalInterface.trim();
+        StringBuilder script = new StringBuilder();
+        script.append("set -eu\\n")
+                .append("IF=").append(shellQuote(interfaceName)).append("\\n")
+                .append("TABLE=").append(shellQuote(table)).append("\\n")
+                .append("MTU=").append(mtu).append("\\n")
+                .append("command -v ip >/dev/null 2>&1 || { echo 'missing ip command'; exit 20; }\\n")
+                .append("command -v nft >/dev/null 2>&1 || { echo 'missing nft command'; exit 21; }\\n")
+                .append("ip link show dev \\"$IF\\" >/dev/null 2>&1 || { echo 'sshd did not create requested TUN interface'; exit 22; }\\n");
+        if (profile.vpnIpv4) {
+            if (wan.isEmpty()) {
+                script.append("WAN=$(ip -o route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i==\\"dev\\"){print $(i+1); exit}}')\\n")
+                        .append("[ -n \\"$WAN\\" ] || { echo 'no IPv4 egress interface'; exit 23; }\\n");
+            } else {
+                script.append("WAN=").append(shellQuote(wan)).append("\\n");
+            }
+            script.append("OLD4=$(cat /proc/sys/net/ipv4/ip_forward)\\n")
+                    .append("if [ \\"$OLD4\\" != 1 ]; then printf '1\\\\n' > /proc/sys/net/ipv4/ip_forward; fi\\n")
+                    .append("ip address replace ").append(VPN_IPV4_SERVER).append(" peer ").append(VPN_IPV4_CLIENT)
+                    .append(" dev \\"$IF\\"\\n");
+        }
+        if (profile.vpnIpv6) {
+            script.append("OLD6=$(cat /proc/sys/net/ipv6/conf/all/forwarding)\\n")
+                    .append("if [ \\"$OLD6\\" != 1 ]; then printf '1\\\\n' > /proc/sys/net/ipv6/conf/all/forwarding; fi\\n")
+                    .append("ip -6 address replace ").append(ipv6[0]).append("/127 peer ").append(ipv6[1])
+                    .append(" dev \\"$IF\\"\\n")
+                    .append("ip -6 route replace ").append(ipv6[1]).append("/128 dev \\"$IF\\"\\n");
+        }
+        script.append("ip link set dev \\"$IF\\" mtu \\"$MTU\\" up\\n")
+                .append("cleanup(){\\n")
+                .append("  nft delete table inet \\"$TABLE\\" >/dev/null 2>&1 || true\\n");
+        if (profile.vpnIpv4) {
+            script.append("  ip address del ").append(VPN_IPV4_SERVER).append(" peer ").append(VPN_IPV4_CLIENT)
+                    .append(" dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
+                    .append("  if [ \\"$OLD4\\" = 0 ]; then printf '0\\\\n' > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true; fi\\n");
+        }
+        if (profile.vpnIpv6) {
+            script.append("  ip -6 route del ").append(ipv6[1]).append("/128 dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
+                    .append("  ip -6 address del ").append(ipv6[0]).append("/127 peer ").append(ipv6[1])
+                    .append(" dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
+                    .append("  if [ \\"$OLD6\\" = 0 ]; then printf '0\\\\n' > /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || true; fi\\n");
+        }
+        script.append("}\\ntrap cleanup EXIT HUP TERM\\n");
+        if (profile.vpnIpv4) {
+            script.append("nft -f - <<EOF\\n")
+                    .append("add table inet $TABLE\\n")
+                    .append("add chain inet $TABLE forward { type filter hook forward priority filter; policy accept; }\\n")
+                    .append("add rule inet $TABLE forward iifname \\"$IF\\" oifname \\"$WAN\\" accept\\n")
+                    .append("add rule inet $TABLE forward iifname \\"$WAN\\" oifname \\"$IF\\" ct state established,related accept\\n")
+                    .append("add chain inet $TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }\\n")
+                    .append("add rule inet $TABLE postrouting oifname \\"$WAN\\" ip saddr ").append(VPN_IPV4_CLIENT)
+                    .append(" masquerade\\n")
+                    .append("EOF\\n");
+        } else {
+            script.append("nft delete table inet \\"$TABLE\\" >/dev/null 2>&1 || true\\n")
+                    .append("nft add table inet \\"$TABLE\\"\\n");
+        }
+        if (profile.vpnIpv6) {
+            script.append("nft add chain inet \\"$TABLE\\" forward6 { type filter hook forward priority filter; policy accept; }\\n")
+                    .append("nft add rule inet \\"$TABLE\\" forward6 iifname \\"$IF\\" accept\\n")
+                    .append("nft add rule inet \\"$TABLE\\" forward6 oifname \\"$IF\\" ct state established,related accept\\n");
+        }
+        script.append("printf 'SSH2SOCKS_TUN_READY\\\\n'\\nwhile :; do sleep 30; done\\n");
+        return script.toString();
+    }
+
+    private String shortProfileToken(String profileId) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(profileId.getBytes(StandardCharsets.UTF_8));
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < 6; i++) result.append(String.format(Locale.ROOT, "%02x", digest[i]));
+            return result.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to derive server resource ID", e);
+        }
+    }
+
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
+    }
+
+    private void closeVpnResources() {
+        ChannelExec monitor = serverConfigChannel;
+        serverConfigChannel = null;
+        if (monitor != null) {
+            try { monitor.disconnect(); } catch (Exception ignored) {}
+        }
+        OpenSshTunChannel tun = activeTun;
+        activeTun = null;
+        if (tun != null) {
+            try { tun.disconnect(); } catch (Exception ignored) {}
+        }
+        ParcelFileDescriptor descriptor = vpnInterface;
+        vpnInterface = null;
+        if (descriptor != null) {
+            try { descriptor.close(); } catch (Exception ignored) {}
+        }
+        activeTunUnit = -1;
+        activeVpnTable = "";
+    }
+
     private List<Profile> resolveChain(Profile target) throws Exception {
         ArrayList<Profile> reversed = new ArrayList<>();
         Set<String> seen = new HashSet<>();
