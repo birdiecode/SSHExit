@@ -319,7 +319,8 @@ final class SshConnection {
                     : readableMessage(e);
             closeActiveSession();
             if (!cancelled) {
-                if (e instanceof NodeException && e.getCause() != null
+                if (!SshTransportSocketFactory.isProtectionFailure(e)
+                        && e instanceof NodeException && e.getCause() != null
                         && !message.toLowerCase(Locale.ROOT).contains("fingerprint")
                         && !isAuthenticationFailure(e)) retryOrFail(message);
                 else fail(targetId, message);
@@ -390,23 +391,14 @@ final class SshConnection {
     }
 
     private SocketFactory protectedSocketFactory() {
-        return new SocketFactory() {
-            @Override public Socket createSocket(String host, int port) throws IOException, UnknownHostException {
-                Socket socket = new Socket();
-                if (vpnRequested && !service.protect(socket)) {
-                    try { socket.close(); } catch (IOException ignored) {}
-                    throw new IOException("Android не смог исключить SSH-сокет из VPN");
-                }
-                socket.connect(new InetSocketAddress(host, port), 20_000);
-                return socket;
-            }
-            @Override public InputStream getInputStream(Socket socket) throws IOException {
-                return socket.getInputStream();
-            }
-            @Override public OutputStream getOutputStream(Socket socket) throws IOException {
-                return socket.getOutputStream();
-            }
-        };
+        return new SshTransportSocketFactory(vpnRequested ? socket -> {
+            AppLog.INSTANCE.record(AppLog.TRACE, connectionId,
+                    "SSH-сокет создан: bound=" + socket.isBound() + ", connected=" + socket.isConnected());
+            boolean protectedSocket = service.protect(socket);
+            AppLog.INSTANCE.record(protectedSocket ? AppLog.DEBUG : AppLog.ERROR, connectionId,
+                    "Защита SSH-сокета: " + (protectedSocket ? "успешно" : "отказ Android"));
+            return protectedSocket;
+        } : null, 20_000);
     }
 
     private void startVpnTunnel(Profile profile, Session endpoint) throws Exception {
