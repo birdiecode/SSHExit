@@ -21,14 +21,18 @@ import java.util.concurrent.Executors;
 final class Socks5Proxy {
     private final Session session;
     private final int port;
+    private final String connectionId;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private volatile ServerSocket server;
     private volatile ExecutorService workers;
     private volatile Thread acceptThread;
 
-    Socks5Proxy(Session session, int port) {
+    Socks5Proxy(Session session, int port) { this(session, port, "socks"); }
+
+    Socks5Proxy(Session session, int port, String connectionId) {
         this.session = session;
         this.port = port;
+        this.connectionId = connectionId;
     }
 
     void start() throws IOException {
@@ -83,6 +87,7 @@ final class Socks5Proxy {
     private void handle(Socket client) {
         ChannelDirectTCPIP channel = null;
         boolean successReplySent = false;
+        AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Принят локальный SOCKS5-клиент");
         try {
             DataInputStream input = new DataInputStream(client.getInputStream());
             DataOutputStream output = new DataOutputStream(client.getOutputStream());
@@ -146,6 +151,7 @@ final class Socks5Proxy {
             InputStream sshInput = channel.getInputStream();
             OutputStream sshOutput = channel.getOutputStream();
             channel.connect(20_000);
+            AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SOCKS5: открыт канал direct-tcpip");
 
             writeReply(output, 0);
             successReplySent = true;
@@ -161,6 +167,7 @@ final class Socks5Proxy {
             toSsh.join();
             toClient.join();
         } catch (Exception e) {
+            AppLog.INSTANCE.record(AppLog.WARN, connectionId, "SOCKS5: " + AppLog.errorCategory(e.getMessage()));
             if (!successReplySent) {
                 try { writeReply(new DataOutputStream(client.getOutputStream()), 1); }
                 catch (Exception ignored) {}
