@@ -44,11 +44,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class SshTunnelService extends VpnService {
-    static final String ACTION_CONNECT = "ru.birdiecode.sshexit.CONNECT";
-    static final String ACTION_TRUST = "ru.birdiecode.sshexit.TRUST";
-    static final String ACTION_STOP = "ru.birdiecode.sshexit.STOP";
+    static final String ACTION_CONNECT = "host.birdiecode.sshexit.CONNECT";
+    static final String ACTION_TRUST = "host.birdiecode.sshexit.TRUST";
+    static final String ACTION_STOP = "host.birdiecode.sshexit.STOP";
     static final String EXTRA_PROFILE_ID = "profile_id";
-    static final String ACTION_PASSWORD = "ru.birdiecode.sshexit.PASSWORD";
+    static final String ACTION_PASSWORD = "host.birdiecode.sshexit.PASSWORD";
     static final String EXTRA_NODE_ID = "node_id";
     static final String EXTRA_PASSWORD = "password";
 
