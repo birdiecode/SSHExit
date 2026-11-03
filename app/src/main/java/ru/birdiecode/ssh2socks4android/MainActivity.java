@@ -394,6 +394,8 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams socksParams = params(-1, -2);
             socksParams.topMargin = dp(9);
             content.addView(socksRow, socksParams);
+            socksRow.setVisibility(("SOCKS5".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode))
+                    ? View.VISIBLE : View.GONE);
             TextView socksLabel = text("SOCKS5", 12, 0xFF65728A, true);
             socksRow.addView(socksLabel);
             TextView socksPort = text("127.0.0.1:" + profile.localPort, 13, 0xFF2457D6, true);
@@ -830,7 +832,6 @@ public final class MainActivity extends Activity {
         route.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
         route.setSelection(selectedIndex);
         form.addView(route);
-        form.addView(localPort);
 
         TextView modeTitle = text("Режим подключения", 16, 0xFF152033, true);
         LinearLayout.LayoutParams modeTitleParams = params(-1, -2);
@@ -846,6 +847,8 @@ public final class MainActivity extends Activity {
         }
         mode.setSelection(modeIndex);
         form.addView(mode);
+        form.addView(localPort);
+        localPort.setVisibility(modeIndex == 1 ? View.GONE : View.VISIBLE);
 
         LinearLayout vpnSettings = new LinearLayout(this);
         vpnSettings.setOrientation(LinearLayout.VERTICAL);
@@ -889,6 +892,7 @@ public final class MainActivity extends Activity {
         mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 vpnSettings.setVisibility(position == 0 ? View.GONE : View.VISIBLE);
+                localPort.setVisibility(position == 1 ? View.GONE : View.VISIBLE);
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
@@ -908,11 +912,14 @@ public final class MainActivity extends Activity {
                 }
                 String userValue = username.getText().toString().trim();
                 int sshPortValue = parsePort(sshPort.getText().toString(), "SSH-порт");
-                int socksPortValue = parsePort(localPort.getText().toString(), "SOCKS5-порт");
+                boolean socksEnabled = mode.getSelectedItemPosition() != 1;
+                int socksPortValue = socksEnabled
+                        ? parsePort(localPort.getText().toString(), "SOCKS5-порт") : profile.localPort;
                 if (hostValue.isEmpty() || userValue.isEmpty()) {
                     throw new IllegalArgumentException("Укажите адрес сервера и имя пользователя");
                 }
-                if (socksPortValue < 1024) throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
+                if (socksEnabled && socksPortValue < 1024)
+                    throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
 
                 int vpnMtuValue = parsePort(vpnMtu.getText().toString(), "MTU");
                 if (vpnMtuValue < 576 || vpnMtuValue > 9000) {
