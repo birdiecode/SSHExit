@@ -56,7 +56,10 @@ final class Socks5Proxy {
     private void acceptLoop() {
         while (server != null) {
             try {
-                Socket client = server.accept();
+                ServerSocket listener = server;
+                if (listener == null) return;
+                Socket client = listener.accept();
+                client.setReuseAddress(true);
                 client.setTcpNoDelay(true);
                 clients.add(client);
                 ExecutorService pool = workers;
