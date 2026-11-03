@@ -61,6 +61,19 @@ public final class SshTunnelService extends VpnService {
     private volatile Socks5Proxy activeProxy;
     private volatile String activeProfileId = "";
     private final Map<String, String> pendingPasswords = new HashMap<>();
+    private volatile ParcelFileDescriptor vpnInterface;
+    private volatile OpenSshTunChannel activeTun;
+    private volatile ChannelExec serverConfigChannel;
+    private volatile int activeTunUnit = -1;
+    private volatile String activeVpnTable = "";
+    private volatile int previousIpv4Forwarding = -1;
+    private volatile int previousIpv6Forwarding = -1;
+    private volatile Thread vpnPacketThread;
+    private static final int VPN_NOTIFICATION_ID = 42;
+    private static final int DEFAULT_VPN_MTU = 1400;
+    private static final String VPN_IPV4_SERVER = "10.253.0.1";
+    private static final String VPN_IPV4_CLIENT = "10.253.0.2";
+
 
     @Override public void onCreate() {
         super.onCreate();
