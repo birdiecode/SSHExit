@@ -35,7 +35,7 @@ android {
     compileSdk 36
 
     defaultConfig {
-        applicationId 'ru.birdiecode.sshexit'
+        applicationId 'host.birdiecode.sshexit'
         minSdk 26
         targetSdk 35
         versionCode 3
