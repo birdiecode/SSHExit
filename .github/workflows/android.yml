@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
 
+# Build and upload the debug APK; screenshot capture is intentionally disabled.
 jobs:
   build:
     name: Build debug APK
