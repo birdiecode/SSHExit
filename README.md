@@ -103,3 +103,30 @@ The current draft does not configure proxy NDP.
 
 Only use an isolated test server for development. In particular, global forwarding
 restoration and fixed IPv4 tunnel addresses are not yet safe for concurrent clients.
+
+### Server plan confirmation
+
+For VPN and SOCKS5 + VPN, SSH authentication is followed by a server plan dialog,
+before the OpenSSH TUN channel is opened or server networking is changed. A
+read-only route probe may run to discover the IPv4 egress interface. Review the
+generated setup and cleanup commands; edit the egress interface and the switches
+for IPv4/IPv6 forwarding, IPv4 masquerade, outbound accept and return accept.
+The command preview updates immediately. These switches control only the app's
+own configuration; they do not disable or override existing firewall rules.
+
+**Apply and connect** saves the selected options to the host profile and continues
+the waiting connection. **Cancel** closes the SSH connection without applying the
+server plan. A new VPN connection, including a reconnect, asks for confirmation
+again. SOCKS5-only connections do not show this dialog.
+
+At INFO verbosity the log distinguishes **ПЛАН** (approved commands),
+**ПРИМЕНЕНО** (steps acknowledged by the server after successful execution),
+and cleanup confirmation/failure. If SSH is unavailable during cleanup, the log
+reports that cleanup was not confirmed. A planned rule is not proof that the server
+applied it. NAT and accept switches default to the previous behavior for profiles
+saved by earlier versions.
+
+Manual verification: cancel a plan and check that no app table was created;
+change the interface/NAT options, connect and compare the preview and log with
+`nft list table inet <table-from-plan>`; disconnect and check cleanup; reconnect
+and verify the saved choices. Repeat with IPv4, IPv6 and combined SOCKS5 + VPN.
