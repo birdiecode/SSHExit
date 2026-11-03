@@ -385,7 +385,20 @@ public final class SshTunnelService extends VpnService {
                 .append("command -v ip >/dev/null 2>&1 || { echo 'missing ip command'; exit 20; }\\n")
                 .append("command -v nft >/dev/null 2>&1 || { echo 'missing nft command'; exit 21; }\\n")
                 .append("ip link show dev \\"$IF\\" >/dev/null 2>&1 || { echo 'sshd did not create requested TUN interface'; exit 22; }\\n");
-        script.append("nft delete table inet \\"$TABLE\\" >/dev/null 2>&1 || true\\n");
+        script.append("OLD4=1\\nOLD6=1\\ncleanup(){\\n")
+                .append("  nft delete table inet \\"$TABLE\\" >/dev/null 2>&1 || true\\n");
+        if (profile.vpnIpv4) {
+            script.append("  ip address del ").append(VPN_IPV4_SERVER).append(" peer ").append(VPN_IPV4_CLIENT)
+                    .append(" dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
+                    .append("  if [ \\"$OLD4\\" = 0 ]; then printf '0\\\\n' > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true; fi\\n");
+        }
+        if (profile.vpnIpv6) {
+            script.append("  ip -6 route del ").append(ipv6[1]).append("/128 dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
+                    .append("  ip -6 address del ").append(ipv6[0]).append("/127 peer ").append(ipv6[1])
+                    .append(" dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
+                    .append("  if [ \\"$OLD6\\" = 0 ]; then printf '0\\\\n' > /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || true; fi\\n");
+        }
+        script.append("}\\ntrap cleanup EXIT\\ntrap 'exit 0' HUP TERM\\n");
         if (profile.vpnIpv4) {
             if (wan.isEmpty()) {
                 script.append("WAN=$(ip -o route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i==\\"dev\\"){print $(i+1); exit}}')\\n")
@@ -405,21 +418,7 @@ public final class SshTunnelService extends VpnService {
                     .append(" dev \\"$IF\\"\\n")
                     .append("ip -6 route replace ").append(ipv6[1]).append("/128 dev \\"$IF\\"\\n");
         }
-        script.append("ip link set dev \\"$IF\\" mtu \\"$MTU\\" up\\n")
-                .append("cleanup(){\\n")
-                .append("  nft delete table inet \\"$TABLE\\" >/dev/null 2>&1 || true\\n");
-        if (profile.vpnIpv4) {
-            script.append("  ip address del ").append(VPN_IPV4_SERVER).append(" peer ").append(VPN_IPV4_CLIENT)
-                    .append(" dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
-                    .append("  if [ \\"$OLD4\\" = 0 ]; then printf '0\\\\n' > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true; fi\\n");
-        }
-        if (profile.vpnIpv6) {
-            script.append("  ip -6 route del ").append(ipv6[1]).append("/128 dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
-                    .append("  ip -6 address del ").append(ipv6[0]).append("/127 peer ").append(ipv6[1])
-                    .append(" dev \\"$IF\\" >/dev/null 2>&1 || true\\n")
-                    .append("  if [ \\"$OLD6\\" = 0 ]; then printf '0\\\\n' > /proc/sys/net/ipv6/conf/all/forwarding 2>/dev/null || true; fi\\n");
-        }
-        script.append("}\\ntrap cleanup EXIT HUP TERM\\n");
+        script.append("ip link set dev \\"$IF\\" mtu \\"$MTU\\" up\\n");
         if (profile.vpnIpv4) {
             script.append("nft -f - <<EOF\\n")
                     .append("add table inet $TABLE\\n")
