@@ -60,6 +60,28 @@ public final class TunPacketStreamsTest {
     }
 
     @Test
+    public void inboundParserHandlesSplitAndCoalescedChannelWrites() throws Exception {
+        byte[] first = new byte[] {0x45, 1, 2, 3};
+        byte[] second = new byte[] {0x60, 4, 5, 6, 7};
+        ByteArrayOutputStream frames = new ByteArrayOutputStream();
+        writeFrame(frames, first);
+        writeFrame(frames, second);
+        byte[] encoded = frames.toByteArray();
+        ByteArrayOutputStream tun = new ByteArrayOutputStream();
+        java.io.OutputStream decoder = TunPacketStreams.removeOpenSshFraming(tun, MTU);
+
+        decoder.write(encoded, 0, 2);
+        decoder.write(encoded, 2, 5);
+        decoder.write(encoded, 7, encoded.length - 7);
+        decoder.close();
+
+        byte[] expected = new byte[first.length + second.length];
+        System.arraycopy(first, 0, expected, 0, first.length);
+        System.arraycopy(second, 0, expected, first.length, second.length);
+        assertArrayEquals(expected, tun.toByteArray());
+    }
+
+    @Test
     public void rejectsFramesLargerThanConfiguredMtu() throws Exception {
         ByteArrayOutputStream frames = new ByteArrayOutputStream();
         frames.write(new byte[] {0, 0, 5, (byte) 0xdc}); // 1500
