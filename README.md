@@ -1,5 +1,7 @@
 # SSHExit
 
+**English** · [Русский](README.ru.md)
+
 An Android app for managing SSH connection profiles and starting a local SOCKS5 proxy through an SSH dynamic port forward, equivalent to ssh -N -D LOCAL_PORT -i KEY -J JUMP USER@HOST.
 
 ## Features
@@ -20,14 +22,6 @@ The app opens a local SOCKS5 listener on 127.0.0.1 only. Configure a SOCKS5-awar
 The application is named **SSHExit**, with application ID `host.birdiecode.sshexit`.
 Android installs it separately from the earlier `ru.birdiecode.ssh2socks4android` app.
 Saved profiles, passwords and private keys in the old installation are not transferred automatically.
-
-## Build
-
-Open the project in Android Studio with JDK 17 and Gradle 8.13, or use an installed Gradle 8.13:
-
-    gradle assembleDebug
-
-The project uses Android Gradle Plugin 8.13.0, compile SDK 36, min SDK 26, and mwiede JSch 2.28.8.
 
 ## Signed releases
 
@@ -134,3 +128,7 @@ Manual verification: cancel a plan and check that no app table was created;
 change the interface/NAT options, connect and compare the preview and log with
 `nft list table inet <table-from-plan>`; disconnect and check cleanup; reconnect
 and verify the saved choices. Repeat with IPv4, IPv6 and combined SOCKS5 + VPN.
+
+## License
+
+Licensed under the [MIT License](LICENSE). Third-party dependencies retain their own licenses.
