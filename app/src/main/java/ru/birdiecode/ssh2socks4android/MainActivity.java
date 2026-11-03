@@ -547,7 +547,7 @@ public final class MainActivity extends Activity {
                     promptedPasswordRequest = "";
                     String value = password.getText().toString();
                     if (value.isEmpty()) {
-                        Toast.makeText(this, "Введите пароль или отмените подключение", Toast.LENGTH_LONG).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
+                        Toast.makeText(this, "Введите пароль или отмените подключение", Toast.LENGTH_LONG).show();
                         startTunnelAction(SshTunnelService.ACTION_STOP, targetId);
                         return;
                     }
@@ -560,7 +560,7 @@ public final class MainActivity extends Activity {
                         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
                         else startService(intent);
                     } catch (Exception e) {
-                        Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
+                        Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show();
                     }
                 }).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
     }
