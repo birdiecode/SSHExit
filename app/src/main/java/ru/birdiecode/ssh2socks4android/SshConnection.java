@@ -164,9 +164,17 @@ final class SshConnection {
     private volatile ChannelExec serverConfigChannel;
     private volatile OutputStream serverConfigControl;
     private volatile Thread serverOutputThread;
-    private volatile boolean serverCleanupConfirmed;
-    private Profile serverEventProfile;
-    private String[] serverEventIpv6;
+    private static final class ServerRun {
+        final Profile profile;
+        final String interfaceName, table;
+        final String[] ipv6;
+        volatile boolean cleanupConfirmed;
+        ServerRun(Profile profile, String interfaceName, String table, String[] ipv6) {
+            this.profile = profile; this.interfaceName = interfaceName; this.table = table;
+            this.ipv6 = ipv6.clone();
+        }
+    }
+    private volatile ServerRun serverRun;
     private String pendingServerRequest = "";
 
     private volatile int activeTunUnit = -1;
@@ -418,15 +426,15 @@ final class SshConnection {
         }
     }
 
-    private void recordServerLine(String line) {
-        if (line.startsWith("SSHEXIT_APPLIED:") && serverEventProfile != null) {
+    private void recordServerLine(ServerRun run, String line) {
+        if (line.startsWith("SSHEXIT_APPLIED:")) {
             String description = ServerTunConfiguration.appliedDescription(line.substring("SSHEXIT_APPLIED:".length()),
-                    serverEventProfile, "tun" + activeTunUnit, activeVpnTable, serverEventIpv6);
+                    run.profile, run.interfaceName, run.table, run.ipv6);
             if (!description.isEmpty())
                 for (String item : description.split("\n"))
                     AppLog.INSTANCE.record(AppLog.INFO, connectionId, "ПРИМЕНЕНО: " + item);
         } else if ("SSHEXIT_CLEANUP_DONE".equals(line)) {
-            serverCleanupConfirmed = true;
+            run.cleanupConfirmed = true;
             AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Сервер подтвердил удаление правил и адресов и восстановление изменённого forwarding");
         } else if ("SSHEXIT_CLEANUP_FAILED".equals(line)) {
             AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Сервер сообщил об ошибке очистки ресурсов");
@@ -531,7 +539,8 @@ final class SshConnection {
         activeVpnTable = table;
         String[] ipv6 = vpnIpv6Addresses(profile);
         String script = ServerTunConfiguration.build(profile, interfaceName, table, mtu, ipv6);
-        serverEventProfile = profile; serverEventIpv6 = ipv6; serverCleanupConfirmed = false;
+        ServerRun run = new ServerRun(profile, interfaceName, table, ipv6);
+        serverRun = run;
         ChannelExec monitor = (ChannelExec) endpoint.openChannel("exec");
         ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         monitor.setErrStream(stderr);
@@ -559,7 +568,7 @@ final class SshConnection {
             Thread.sleep(50);
         }
         int lastNewline = response.lastIndexOf("\n");
-        if (lastNewline >= 0) for (String line : response.substring(0, lastNewline).split("\n")) recordServerLine(line);
+        if (lastNewline >= 0) for (String line : response.substring(0, lastNewline).split("\n")) recordServerLine(run, line);
         if (!ready) {
             String diagnostic = stderr.toString(StandardCharsets.UTF_8.name()).trim();
             monitor.disconnect();
@@ -575,7 +584,7 @@ final class SshConnection {
             try {
                 BufferedReader lines = new BufferedReader(new InputStreamReader(events, StandardCharsets.UTF_8));
                 String line;
-                while ((line = lines.readLine()) != null) recordServerLine(line);
+                while ((line = lines.readLine()) != null) recordServerLine(run, line);
             } catch (IOException ignored) { }
         }, "server-events-" + connectionId.substring(0, 8));
         reader.setDaemon(true);
@@ -602,6 +611,8 @@ final class SshConnection {
 
     private void closeVpnResources() {
         ChannelExec monitor = serverConfigChannel;
+        ServerRun run = serverRun;
+        serverRun = null;
         serverConfigChannel = null;
         if (monitor != null) {
             AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Запрошена очистка серверных ресурсов");
@@ -612,7 +623,7 @@ final class SshConnection {
                 Thread reader = serverOutputThread;
                 if (reader != null && reader != Thread.currentThread()) reader.join(2000);
             } catch (Exception ignored) { }
-            if (!serverCleanupConfirmed)
+            if (run == null || !run.cleanupConfirmed)
                 AppLog.INSTANCE.record(AppLog.WARN, connectionId, "Очистка сервера не подтверждена (сеть или SSH могли быть недоступны)");
             try { monitor.disconnect(); } catch (Exception ignored) { }
             serverOutputThread = null;
