@@ -28,22 +28,13 @@ public final class TunPacketStreams {
             throws IOException {
         if (channelInput == null || tunOutput == null) throw new IllegalArgumentException("Streams are required");
         validateMtu(mtu);
-        DataInputStream data = new DataInputStream(channelInput);
-        byte[] packet = new byte[mtu];
-        while (true) {
-            int length;
-            try {
-                length = data.readInt();
-            } catch (EOFException end) {
-                return;
-            }
-            if (length <= 0 || length > mtu) {
-                throw new IOException("Invalid SSH TUN packet length: " + length);
-            }
-            data.readFully(packet, 0, length);
-            tunOutput.write(packet, 0, length);
-            tunOutput.flush();
+        OutputStream decoder = removeOpenSshFraming(tunOutput, mtu);
+        byte[] buffer = new byte[mtu + 8];
+        int count;
+        while ((count = channelInput.read(buffer)) >= 0) {
+            if (count > 0) decoder.write(buffer, 0, count);
         }
+        ((FramedPacketOutputStream) decoder).finish();
     }
 
     /**
@@ -59,11 +50,12 @@ public final class TunPacketStreams {
     private static final class FramedPacketOutputStream extends OutputStream {
         private final OutputStream tunOutput;
         private final int mtu;
-        private final byte[] header = new byte[4];
+        private final byte[] header = new byte[8];
         private final byte[] packet;
         private int headerOffset;
         private int packetLength = -1;
         private int packetOffset;
+        private int expectedVersion;
         private boolean closed;
 
         FramedPacketOutputStream(OutputStream tunOutput, int mtu) {
@@ -88,16 +80,21 @@ public final class TunPacketStreams {
             int end = offset + length;
             while (offset < end) {
                 if (packetLength < 0) {
-                    int count = Math.min(4 - headerOffset, end - offset);
+                    int count = Math.min(8 - headerOffset, end - offset);
                     System.arraycopy(bytes, offset, header, headerOffset, count);
                     offset += count;
                     headerOffset += count;
-                    if (headerOffset == 4) {
+                    if (headerOffset == 8) {
                         packetLength = ((header[0] & 0xff) << 24) | ((header[1] & 0xff) << 16)
                                 | ((header[2] & 0xff) << 8) | (header[3] & 0xff);
-                        if (packetLength <= 0 || packetLength > mtu) {
+                        if (packetLength <= 4 || packetLength > mtu + 4) {
                             throw new IOException("Invalid SSH TUN packet length: " + packetLength);
                         }
+                        int family = ((header[4] & 255) << 24) | ((header[5] & 255) << 16)
+                                | ((header[6] & 255) << 8) | (header[7] & 255);
+                        if (family != 2 && family != 24) throw new IOException("Invalid SSH TUN address family");
+                        expectedVersion = family == 2 ? 4 : 6;
+                        packetLength -= 4;
                         packetOffset = 0;
                     }
                 } else {
@@ -106,6 +103,8 @@ public final class TunPacketStreams {
                     offset += count;
                     packetOffset += count;
                     if (packetOffset == packetLength) {
+                        if ((packet[0] >>> 4 & 15) != expectedVersion)
+                            throw new IOException("SSH TUN address family does not match packet");
                         tunOutput.write(packet, 0, packetLength);
                         tunOutput.flush();
                         packetLength = -1;
@@ -116,17 +115,15 @@ public final class TunPacketStreams {
             }
         }
 
-        @Override
-        public synchronized void close() throws IOException {
+        synchronized void finish() throws IOException {
+            if (headerOffset != 0 || packetLength >= 0)
+                throw new EOFException("SSH TUN channel closed in the middle of a packet");
+        }
+
+        @Override public synchronized void close() throws IOException {
             if (closed) return;
             closed = true;
-            try {
-                if (headerOffset != 0 || packetLength >= 0) {
-                    throw new IOException("SSH TUN channel closed in the middle of a packet");
-                }
-            } finally {
-                tunOutput.close();
-            }
+            try { finish(); } finally { tunOutput.close(); }
         }
     }
 
@@ -145,7 +142,7 @@ public final class TunPacketStreams {
         FramedPacketInputStream(InputStream tunInput, int mtu) {
             this.tunInput = tunInput;
             this.mtu = mtu;
-            this.framed = new byte[mtu + 4];
+            this.framed = new byte[mtu + 8];
         }
 
         @Override
@@ -178,13 +175,18 @@ public final class TunPacketStreams {
                 length = tunInput.read(packet, 0, packet.length);
             } while (length == 0);
             if (length < 0) return false;
-            framed[0] = (byte) (length >>> 24);
-            framed[1] = (byte) (length >>> 16);
-            framed[2] = (byte) (length >>> 8);
-            framed[3] = (byte) length;
-            System.arraycopy(packet, 0, framed, 4, length);
+            int version = (packet[0] >>> 4) & 15;
+            if (version != 4 && version != 6) throw new IOException("Unsupported TUN packet version");
+            int framedLength = length + 4;
+            framed[0] = (byte) (framedLength >>> 24);
+            framed[1] = (byte) (framedLength >>> 16);
+            framed[2] = (byte) (framedLength >>> 8);
+            framed[3] = (byte) framedLength;
+            framed[4] = framed[5] = framed[6] = 0;
+            framed[7] = (byte) (version == 4 ? 2 : 24);
+            System.arraycopy(packet, 0, framed, 8, length);
             offset = 0;
-            available = length + 4;
+            available = length + 8;
             return true;
         }
 
