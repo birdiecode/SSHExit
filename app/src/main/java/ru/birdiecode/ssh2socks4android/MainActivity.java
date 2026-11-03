@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Typeface;
+import android.graphics.Rect;
 import android.content.res.Configuration;
 import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
@@ -55,10 +56,12 @@ public final class MainActivity extends Activity {
     private final Map<String, TextView> rowStatuses = new HashMap<>();
     private final Map<String, TextView> rowFingerprints = new HashMap<>();
     private final Map<String, View> rowErrorPanels = new HashMap<>();
+    private final Map<String, View> rowCards = new HashMap<>();
     private final Map<String, TextView> rowErrorSummaries = new HashMap<>();
     private final Map<String, TextView> rowTechnicalDetails = new HashMap<>();
 
     private LinearLayout list;
+    private ScrollView hostsScroll;
     private LinearLayout keyList;
     private FrameLayout contentHost;
     private BottomNavigationView bottomNavigation;
@@ -123,7 +126,7 @@ public final class MainActivity extends Activity {
         hostsPage.addView(add, addParams);
         add.setOnClickListener(v -> showEditor(null));
 
-        ScrollView hostsScroll = new ScrollView(this);
+        hostsScroll = new ScrollView(this);
         hostsScroll.setClipToPadding(false);
         hostsScroll.setFillViewport(false);
         list = new LinearLayout(this);
@@ -200,7 +203,9 @@ public final class MainActivity extends Activity {
 
     private void renderProfiles() {
         if (list == null) return;
+        final int previousScrollY = hostsScroll == null ? 0 : hostsScroll.getScrollY();
         list.removeAllViews();
+        rowCards.clear();
         rowStatuses.clear();
         rowFingerprints.clear();
         rowErrorPanels.clear();
@@ -225,6 +230,7 @@ public final class MainActivity extends Activity {
             emptyContent.addView(empty, emptyParams);
             emptyCard.addView(emptyContent);
             list.addView(emptyCard, params(-1, -2));
+            restoreHostScroll(previousScrollY);
             return;
         }
 
@@ -237,6 +243,7 @@ public final class MainActivity extends Activity {
             LinearLayout.LayoutParams cardParams = params(-1, -2);
             cardParams.bottomMargin = dp(12);
             list.addView(card, cardParams);
+            rowCards.put(profile.id, card);
 
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
@@ -336,8 +343,25 @@ public final class MainActivity extends Activity {
 
 
         }
+        restoreHostScroll(previousScrollY);
         refreshStatuses();
     }
+
+    private void restoreHostScroll(int scrollY) {
+        if (hostsScroll == null) return;
+        hostsScroll.post(() -> hostsScroll.scrollTo(0, scrollY));
+    }
+
+    private void scrollToHost(String profileId) {
+        View hostCard = rowCards.get(profileId);
+        if (hostCard == null) return;
+        hostCard.post(() -> {
+            if (hostCard.getParent() == null) return;
+            Rect visibleRect = new Rect(0, 0, hostCard.getWidth(), hostCard.getHeight());
+            hostCard.requestRectangleOnScreen(visibleRect, false);
+        });
+    }
+
     private void refreshStatuses() {
         if (overallStatus == null) return;
         String status = ProfileStore.status(this);
@@ -376,7 +400,16 @@ public final class MainActivity extends Activity {
             TextView errorSummary = rowErrorSummaries.get(id);
             TextView technicalDetails = rowTechnicalDetails.get(id);
             boolean showError = id.equals(profileId) && "ERROR".equals(status);
+            boolean errorWasVisible = errorPanel != null && errorPanel.getVisibility() == View.VISIBLE;
             if (errorPanel != null) errorPanel.setVisibility(showError ? View.VISIBLE : View.GONE);
+            if (showError && !errorWasVisible && errorPanel != null) {
+                View panel = errorPanel;
+                panel.post(() -> {
+                    if (panel.getVisibility() != View.VISIBLE) return;
+                    Rect visibleRect = new Rect(0, 0, panel.getWidth(), panel.getHeight());
+                    panel.requestRectangleOnScreen(visibleRect, false);
+                });
+            }
             if (showError) {
                 String rawError = detail == null || detail.trim().isEmpty() ? "Подробности отсутствуют." : detail;
                 if (errorSummary != null) errorSummary.setText(friendlyConnectionError(rawError));
@@ -728,6 +761,7 @@ public final class MainActivity extends Activity {
                 ProfileStore.save(this, profile);
                 dialog.dismiss();
                 renderProfiles();
+                scrollToHost(profile.id);
             } catch (Exception e) {
                 Toast.makeText(this, e.getMessage() == null ? "Не удалось сохранить хост" : e.getMessage(),
                         Toast.LENGTH_LONG).show();
