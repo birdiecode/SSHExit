@@ -98,11 +98,14 @@ final class SshConnection {
     }
     private void checkHealth() {
         if (!"CONNECTED".equals(state) || cancelled) return;
-        boolean lost = activeSession == null || !activeSession.isConnected();
-        if (activeTun != null && activeTun.isClosed()) lost = true;
-        if (serverConfigChannel != null && serverConfigChannel.isClosed()) lost = true;
+        String failure = "";
+        if (activeSession == null || !activeSession.isConnected()) failure = "Закрыта SSH-сессия";
+        else if (activeTun != null && activeTun.isClosed()) failure = "Закрыт канал SSH TUN";
+        else if (serverConfigChannel != null && serverConfigChannel.isClosed())
+            failure = "Завершился серверный процесс настройки TUN, exit=" + serverConfigChannel.getExitStatus();
+        boolean lost = !failure.isEmpty();
         if (lost && System.currentTimeMillis() - connectedAt >= 60000) retryAttempt = 0;
-        if (lost) retryOrFail("SSH-транспорт или TUN-канал закрыт");
+        if (lost) retryOrFail(failure);
     }
 
     private void retryOrFail(String reason) {
@@ -113,7 +116,7 @@ final class SshConnection {
         if (retry != null && !retry.isDone()) return;
         long ceiling = Math.min(60000L, 1000L << Math.min(retryAttempt++, 6));
         long delay = ceiling / 2 + new Random().nextInt((int) (ceiling / 2 + 1));
-        setStatus(activeProfileId, "RECONNECTING", "Повторное подключение через " + delay + " мс");
+        setStatus(activeProfileId, "RECONNECTING", reason + "\nПовторное подключение через " + delay + " мс");
         retry = worker.schedule(() -> {
             retry = null;
             if (!cancelled) connect(activeProfileId);
@@ -319,6 +322,7 @@ final class SshConnection {
         VpnService.Builder builder = service.new Builder()
                 .setSession(profile.name == null || profile.name.isEmpty() ? profile.host : profile.name)
                 .setMtu(profile.vpnMtu)
+                .setBlocking(true)
                 .addDisallowedApplication(service.getPackageName());
 
         if (profile.vpnIpv4) {
@@ -377,7 +381,7 @@ final class SshConnection {
         return new SocketFactory() {
             @Override public Socket createSocket(String host, int port) throws IOException, UnknownHostException {
                 Socket socket = new Socket();
-                if (!service.protect(socket)) {
+                if (vpnRequested && !service.protect(socket)) {
                     try { socket.close(); } catch (IOException ignored) {}
                     throw new IOException("Android не смог исключить SSH-сокет из VPN");
                 }
