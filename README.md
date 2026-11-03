@@ -54,13 +54,21 @@ Keep the device lock screen enabled. Deleting a profile removes its encrypted ke
 The VPN implementation in this branch is incomplete and is not ready for deployment.
 The Android consent flow, VpnService interface, protected SSH sockets, custom
 point-to-point OpenSSH channel and server configuration script are present.
+Each profile now owns an independent lifecycle, SSH chain, SOCKS listener,
+authentication requests and scheduled transport health checks. Disconnect actions
+are scoped to one profile; the notification can disconnect all. Manual cancellation
+stops scheduled reconnect attempts. Multiple SOCKS connections are supported; the
+current service explicitly reserves the Android VPN for one connection until the
+shared VPN packet runtime and address allocation are integrated.
+
 The packet codec includes the OpenSSH length and address-family fields (2 for IPv4,
 24 for IPv6). Unit tests check wire vectors, fragmented input, prefix routing,
-shell syntax and unsafe interface parameters.
+shell syntax, unsafe interface parameters, valid lifecycle transitions and isolated
+connection cancellation. Actual concurrent sessions and network recovery still
+require integration verification.
 
 Still required before release:
 
-- Replace the single active connection lifecycle with independent connections.
 - Integrate the multi-tunnel packet router into one shared Android VPN.
 - Allocate collision-free tunnel addresses and coordinate global forwarding settings.
 - Implement server leases, reconciliation and independent reconnect/backoff.
