@@ -165,7 +165,7 @@ final class SshConnection {
                 PinnedHostKeyRepository pinning = new PinnedHostKeyRepository(node.hostFingerprint);
                 jsch.setHostKeyRepository(pinning);
                 Session session = jsch.getSession(node.username, normalizeSshHost(node.host), node.sshPort);
-                if (vpnMode) session.setSocketFactory(protectedSocketFactory());
+                session.setSocketFactory(protectedSocketFactory());
                 session.setConfig("StrictHostKeyChecking", "yes");
                 String promptedPassword = pendingPasswords.get(node.id);
                 boolean hasSavedPassword = node.encryptedPassword != null && !node.encryptedPassword.isEmpty();
@@ -473,7 +473,6 @@ final class SshConnection {
     }
 
     private void requestPassword(String targetId, Profile node) {
-        activeProfileId = targetId;
         closeActiveSession();
         setStatus( targetId, "NEEDS_PASSWORD", "NODE:" + node.id);
         updateNotification("SSH password required", "Enter password for " + node.username + "@" + node.host);
