@@ -687,7 +687,7 @@ public final class MainActivity extends Activity {
             form.setPadding(dp(16), dp(8), dp(16), dp(12));
             TextView hint = text("SSH: " + stored.username + "@" + formatHostPort(stored.host, stored.sshPort)
                     + "\nНастройка сервера ещё не выполнялась. Измените параметры и подтвердите план. "
-                    + "Изменения сохранятся в профиле. При новом подключении план будет показан снова.",
+                    + "Изменения сохранятся в профиле. Можно отключить повторный запрос для этого хоста.",
                     13, 0xFF65728A, false);
             form.addView(hint, params(-1, -2));
             EditText wan = input("Внешний интерфейс сервера", request.optString("wan"), InputType.TYPE_CLASS_TEXT);
@@ -710,6 +710,9 @@ public final class MainActivity extends Activity {
             choices[0].setVisibility(stored.vpnIpv4 ? View.VISIBLE : View.GONE);
             choices[1].setVisibility(stored.vpnIpv6 ? View.VISIBLE : View.GONE);
             choices[2].setVisibility(stored.vpnIpv4 ? View.VISIBLE : View.GONE);
+
+            CheckBox skipConfirmation = checkBox("Больше не спрашивать для этого хоста", stored.serverSkipConfirmation);
+            form.addView(skipConfirmation, params(-1, -2));
 
             TextView preview = text("", 12, 0xFF33415C, false);
             preview.setTypeface(Typeface.MONOSPACE);
@@ -758,6 +761,7 @@ public final class MainActivity extends Activity {
                     intent.putExtra(SshTunnelService.EXTRA_PROFILE_ID, targetId);
                     intent.putExtra("server_request", requestId);
                     intent.putExtra("server_wan", draft.vpnExternalInterface);
+                    intent.putExtra("serverSkipConfirmation", skipConfirmation.isChecked());
                     for (int i = 0; i < choices.length; i++) intent.putExtra(optionKeys[i], choices[i].isChecked());
                     if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
                     dialog.dismiss();
@@ -965,6 +969,7 @@ public final class MainActivity extends Activity {
         CheckBox vpnPrimary = checkBox("Использовать как основной VPN", profile.vpnPrimary);
         CheckBox vpnFailover = checkBox("Разрешить резервное переключение", profile.vpnFailover);
         CheckBox vpnReconnect = checkBox("Автоматически переподключаться", profile.vpnAutoReconnect);
+        CheckBox serverConfirmation = checkBox("Показывать настройки сервера перед подключением", !profile.serverSkipConfirmation);
         EditText vpnMtu = input("MTU (576–9000)", String.valueOf(profile.vpnMtu), InputType.TYPE_CLASS_NUMBER);
         EditText vpnDns = input("DNS-серверы через запятую", profile.vpnDnsServers, InputType.TYPE_CLASS_TEXT);
         EditText vpnRoutes = new EditText(this);
@@ -991,6 +996,7 @@ public final class MainActivity extends Activity {
         vpnSettings.addView(vpnFailover);
         vpnSettings.addView(vpnReconnect);
         vpnSettings.addView(vpnInterface);
+        vpnSettings.addView(serverConfirmation);
         form.addView(vpnSettings);
         vpnSettings.setVisibility(modeIndex == 0 ? View.GONE : View.VISIBLE);
         mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -1081,6 +1087,7 @@ public final class MainActivity extends Activity {
                 profile.vpnFailover = vpnFailover.isChecked();
                 profile.vpnAutoReconnect = vpnReconnect.isChecked();
                 profile.vpnExternalInterface = interfaceValue;
+                profile.serverSkipConfirmation = !serverConfirmation.isChecked();
                 profile.jumpProfileId = jumpId;
                 profile.jumpHost = "";
                 profile.jumpUsername = "";
@@ -1345,6 +1352,7 @@ public final class MainActivity extends Activity {
         p.vpnPrimary = source.vpnPrimary;
         p.vpnFailover = source.vpnFailover;
         p.vpnAutoReconnect = source.vpnAutoReconnect;
+        p.serverSkipConfirmation = source.serverSkipConfirmation;
         p.serverManageIpv4Forwarding = source.serverManageIpv4Forwarding;
         p.serverManageIpv6Forwarding = source.serverManageIpv6Forwarding;
         p.serverNatIpv4 = source.serverNatIpv4;
