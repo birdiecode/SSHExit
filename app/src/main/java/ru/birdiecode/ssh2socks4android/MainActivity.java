@@ -394,10 +394,10 @@ public final class MainActivity extends Activity {
             View errorPanel = rowErrorPanels.get(id);
             TextView errorSummary = rowErrorSummaries.get(id);
             TextView technicalDetails = rowTechnicalDetails.get(id);
-            boolean showError = "ERROR".equals(status);
+            boolean showError = "ERROR".equals(status) || "RECONNECTING".equals(status);
             boolean errorWasVisible = errorPanel != null && errorPanel.getVisibility() == View.VISIBLE;
             if (errorPanel != null) errorPanel.setVisibility(showError ? View.VISIBLE : View.GONE);
-            if (showError && !errorWasVisible && errorPanel != null) {
+            if ("ERROR".equals(status) && !errorWasVisible && errorPanel != null) {
                 View panel = errorPanel;
                 panel.post(() -> {
                     if (panel.getVisibility() != View.VISIBLE) return;
