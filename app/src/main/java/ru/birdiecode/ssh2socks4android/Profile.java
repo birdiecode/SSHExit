@@ -15,6 +15,7 @@ final class Profile {
     String connectionMode = "SOCKS5";
     boolean vpnIpv4 = true;
     boolean vpnIpv6 = false;
+    String vpnIpv6Prefix = "";
     int vpnMtu = 1400;
     String vpnDnsServers = "1.1.1.1";
     boolean vpnFullTunnel = true;
