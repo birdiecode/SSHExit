@@ -384,6 +384,15 @@ final class SshConnection {
                     throw new IOException("Не удалось определить внешний IPv4-интерфейс сервера");
             } finally { probe.disconnect(); }
         }
+        if (target.serverSkipConfirmation) {
+            checkCancelled();
+            target.vpnExternalInterface = wan;
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId,
+                    "Используются сохранённые настройки сервера без запроса (выбор пользователя)");
+            logServerPlan(target);
+            completeConnection(target);
+            return;
+        }
         String[] ipv6 = vpnIpv6Addresses(target);
         pendingServerRequest = java.util.UUID.randomUUID().toString();
         org.json.JSONObject request = new org.json.JSONObject();
@@ -409,21 +418,30 @@ final class SshConnection {
             if (profile.vpnExternalInterface == null) profile.vpnExternalInterface = "";
             if (profile.vpnIpv4 && profile.vpnExternalInterface.isEmpty())
                 throw new IllegalArgumentException("Укажите внешний интерфейс IPv4");
+            profile.serverSkipConfirmation = intent.getBooleanExtra("serverSkipConfirmation", false);
             profile.serverManageIpv4Forwarding = intent.getBooleanExtra("serverManageIpv4Forwarding", true);
             profile.serverManageIpv6Forwarding = intent.getBooleanExtra("serverManageIpv6Forwarding", true);
             profile.serverNatIpv4 = intent.getBooleanExtra("serverNatIpv4", true);
             profile.serverAcceptOutbound = intent.getBooleanExtra("serverAcceptOutbound", true);
             profile.serverAcceptReturn = intent.getBooleanExtra("serverAcceptReturn", true);
-            String plan = ServerTunConfiguration.preview(profile, "tun" + activeTunUnit, activeVpnTable, vpnIpv6Addresses(profile));
+            ServerTunConfiguration.preview(profile, "tun" + activeTunUnit, activeVpnTable, vpnIpv6Addresses(profile));
             ProfileStore.save(context, profile);
             pendingServerRequest = "";
             AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Серверные параметры подтверждены и сохранены в профиле");
-            for (String line : plan.split("\n")) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "ПЛАН: " + line);
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId, profile.serverSkipConfirmation
+                    ? "Повторный запрос настроек сервера отключён для этого хоста"
+                    : "Настройки сервера будут запрашиваться при следующем подключении");
+            logServerPlan(profile);
             completeConnection(profile);
         } catch (Exception error) {
             AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Не удалось применить серверный план: " + error.getClass().getSimpleName());
             fail(activeProfileId, readableMessage(error));
         }
+    }
+
+    private void logServerPlan(Profile profile) throws Exception {
+        String plan = ServerTunConfiguration.preview(profile, "tun" + activeTunUnit, activeVpnTable, vpnIpv6Addresses(profile));
+        for (String line : plan.split("\n")) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "ПЛАН: " + line);
     }
 
     private void recordServerLine(ServerRun run, String line) {
