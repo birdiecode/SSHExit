@@ -70,6 +70,12 @@ public final class MainActivity extends Activity {
     private FrameLayout contentHost;
     private BottomNavigationView bottomNavigation;
     private TextView overallStatus;
+    private ScrollView logsScroll;
+    private TextView logsText;
+    private TextView verbosityLabel;
+    private int logVerbosity = AppLog.INFO;
+    private long renderedLogRevision = -1;
+
     private byte[] pendingVaultKey;
     private String pendingVaultKeyName = "";
     private String promptedFingerprint = "";
@@ -79,6 +85,7 @@ public final class MainActivity extends Activity {
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             refreshStatuses();
+            refreshLogs();
             handler.postDelayed(this, 1000);
         }
     };
@@ -165,9 +172,13 @@ public final class MainActivity extends Activity {
         contentHost.addView(keysPage);
         keysPage.setVisibility(View.GONE);
 
+        contentHost.addView(createLogsPage());
+        contentHost.getChildAt(2).setVisibility(View.GONE);
+
         bottomNavigation = new BottomNavigationView(this);
         bottomNavigation.getMenu().add(0, 1, 0, "Хосты").setIcon(R.drawable.ic_hosts);
         bottomNavigation.getMenu().add(0, 2, 1, "Ключи").setIcon(R.drawable.ic_keys);
+        bottomNavigation.getMenu().add(0, 3, 2, "Логи").setIcon(R.drawable.ic_logs);
         bottomNavigation.setLabelVisibilityMode(BottomNavigationView.LABEL_VISIBILITY_LABELED);
         bottomNavigation.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
         bottomNavigation.setOnItemSelectedListener(item -> {
@@ -179,13 +190,104 @@ public final class MainActivity extends Activity {
         setContentView(page);
         renderProfiles();
         renderKeyList();
+        if (savedInstanceState != null) bottomNavigation.setSelectedItemId(savedInstanceState.getInt("selectedTab", 1));
     }
 
     private void switchTab(int tabId) {
         if (contentHost == null || contentHost.getChildCount() < 2) return;
         contentHost.getChildAt(0).setVisibility(tabId == 1 ? View.VISIBLE : View.GONE);
         contentHost.getChildAt(1).setVisibility(tabId == 2 ? View.VISIBLE : View.GONE);
+        contentHost.getChildAt(2).setVisibility(tabId == 3 ? View.VISIBLE : View.GONE);
         if (tabId == 2) renderKeyList();
+        if (tabId == 3) refreshLogs();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        if (bottomNavigation != null) out.putInt("selectedTab", bottomNavigation.getSelectedItemId());
+    }
+
+    private View createLogsPage() {
+        logVerbosity = Math.max(0, Math.min(4,
+                getSharedPreferences("diagnostics", MODE_PRIVATE).getInt("verbosity", AppLog.INFO)));
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        verbosityLabel = text("", 14, 0xFF33415C, true);
+        page.addView(verbosityLabel, params(-1, -2));
+        updateVerbosityLabel();
+
+        com.google.android.material.slider.Slider verbosity = new com.google.android.material.slider.Slider(this);
+        verbosity.setValueFrom(0);
+        verbosity.setValueTo(4);
+        verbosity.setStepSize(1);
+        verbosity.setValue(logVerbosity);
+        verbosity.setContentDescription("Подробность логов");
+        verbosity.setLabelFormatter(value -> verbosityName(Math.round(value)));
+        verbosity.addOnChangeListener((slider, value, fromUser) -> {
+            logVerbosity = Math.round(value);
+            getSharedPreferences("diagnostics", MODE_PRIVATE).edit().putInt("verbosity", logVerbosity).apply();
+            renderedLogRevision = -1;
+            updateVerbosityLabel();
+            refreshLogs();
+        });
+        page.addView(verbosity, params(-1, -2));
+        TextView hint = text("0 — ошибки · 4 — максимум. Последние 1000 событий текущего запуска приложения.",
+                12, 0xFF65728A, false);
+        page.addView(hint, params(-1, -2));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        MaterialButton copy = makeButton("Копировать", false);
+        MaterialButton clear = makeButton("Очистить", false);
+        actions.addView(copy, new LinearLayout.LayoutParams(0, -2, 1f));
+        LinearLayout.LayoutParams clearParams = new LinearLayout.LayoutParams(0, -2, 1f);
+        clearParams.leftMargin = dp(8);
+        actions.addView(clear, clearParams);
+        page.addView(actions, params(-1, -2));
+        copy.setOnClickListener(view -> {
+            String journal = AppLog.INSTANCE.render(logVerbosity);
+            android.content.ClipboardManager clipboard =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("SSH2SOCKS — логи", journal));
+                Toast.makeText(this, "Логи скопированы", Toast.LENGTH_SHORT).show();
+            }
+        });
+        clear.setOnClickListener(view -> { AppLog.INSTANCE.clear(); refreshLogs(); });
+
+        logsScroll = new ScrollView(this);
+        logsScroll.setFillViewport(true);
+        logsScroll.setClipToPadding(false);
+        logsText = text("", 12, 0xFF33415C, false);
+        logsText.setTypeface(Typeface.MONOSPACE);
+        logsText.setTextIsSelectable(true);
+        logsText.setPadding(dp(8), dp(8), dp(8), dp(16));
+        logsScroll.addView(logsText, new ScrollView.LayoutParams(-1, -2));
+        page.addView(logsScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        return page;
+    }
+
+    private String verbosityName(int level) {
+        return new String[]{"Ошибки", "Предупреждения", "События", "Отладка", "Трассировка"}[level];
+    }
+
+    private void updateVerbosityLabel() {
+        verbosityLabel.setText("Подробность: " + logVerbosity + " — " + verbosityName(logVerbosity));
+    }
+
+    private void refreshLogs() {
+        if (logsText == null || bottomNavigation == null || bottomNavigation.getSelectedItemId() != 3) return;
+        long revision = AppLog.INSTANCE.revision();
+        if (revision == renderedLogRevision) return;
+        renderedLogRevision = revision;
+        boolean atBottom = logsText.getHeight() <= logsScroll.getHeight() + logsScroll.getScrollY() + dp(40);
+        int previousY = logsScroll.getScrollY();
+        String journal = AppLog.INSTANCE.render(logVerbosity);
+        logsText.setText(journal.isEmpty() ? "Нет событий на выбранном уровне подробности." : journal);
+        logsScroll.post(() -> {
+            if (atBottom) logsScroll.fullScroll(View.FOCUS_DOWN);
+            else logsScroll.scrollTo(0, previousY);
+        });
     }
 
     private void launchKeyPicker() {
