@@ -24,6 +24,7 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.FrameLayout;
 import android.widget.Spinner;
@@ -54,7 +55,6 @@ public final class MainActivity extends Activity {
     private final Map<String, TextView> rowStatuses = new HashMap<>();
     private final Map<String, MaterialButton> rowActions = new HashMap<>();
     private final Map<String, TextView> rowFingerprints = new HashMap<>();
-    private final Map<String, MaterialButton> rowFingerprintResets = new HashMap<>();
 
     private LinearLayout list;
     private LinearLayout keyList;
@@ -202,7 +202,6 @@ public final class MainActivity extends Activity {
         rowStatuses.clear();
         rowActions.clear();
         rowFingerprints.clear();
-        rowFingerprintResets.clear();
 
         List<Profile> profiles = ProfileStore.all(this);
         if (profiles.isEmpty()) {
@@ -246,6 +245,12 @@ public final class MainActivity extends Activity {
             chipParams.leftMargin = dp(8);
             titleRow.addView(state, chipParams);
             rowStatuses.put(profile.id, state);
+
+            MaterialButton more = overflowButton();
+            LinearLayout.LayoutParams moreParams = params(dp(44), dp(44));
+            moreParams.leftMargin = dp(4);
+            titleRow.addView(more, moreParams);
+            more.setOnClickListener(v -> showProfileActions(profile, more));
 
             TextView endpoint = text(profile.username + "@" + profile.host + ":" + profile.sshPort,
                     14, 0xFF33415C, false);
@@ -312,14 +317,6 @@ public final class MainActivity extends Activity {
             deleteParams.leftMargin = dp(8);
             secondaryActions.addView(delete, deleteParams);
 
-            MaterialButton resetFingerprint = makeButton("Сбросить fingerprint", false);
-            resetFingerprint.setOnClickListener(v -> confirmFingerprintReset(profile));
-            LinearLayout.LayoutParams resetParams = params(-2, dp(42));
-            resetParams.topMargin = dp(4);
-            content.addView(resetFingerprint, resetParams);
-            resetFingerprint.setVisibility(profile.hostFingerprint == null || profile.hostFingerprint.isEmpty()
-                    ? View.GONE : View.VISIBLE);
-            rowFingerprintResets.put(profile.id, resetFingerprint);
         }
         refreshStatuses();
     }
@@ -358,11 +355,6 @@ public final class MainActivity extends Activity {
             Profile rowProfile = ProfileStore.get(this, id);
             TextView fingerprint = rowFingerprints.get(id);
             if (rowProfile != null && fingerprint != null) updateFingerprintStatus(fingerprint, rowProfile);
-            MaterialButton resetFingerprint = rowFingerprintResets.get(id);
-            if (resetFingerprint != null && rowProfile != null) {
-                resetFingerprint.setVisibility(rowProfile.hostFingerprint == null || rowProfile.hostFingerprint.isEmpty()
-                        ? View.GONE : View.VISIBLE);
-            }
             if (row == null || action == null) continue;
             if (!id.equals(profileId)) {
                 boolean hasFingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
@@ -809,51 +801,92 @@ public final class MainActivity extends Activity {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
             card.addView(row);
+            LinearLayout heading = new LinearLayout(this);
+            heading.setGravity(Gravity.CENTER_VERTICAL);
+            row.addView(heading);
             TextView label = text(key.name, 16, 0xFF152033, true);
             label.setMaxLines(2);
             label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            row.addView(label);
+            heading.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+            MaterialButton more = overflowButton();
+            heading.addView(more, params(dp(44), dp(44)));
+            more.setOnClickListener(v -> showKeyActions(key, more));
+
             TextView description = text("Приватный ключ · общее хранилище", 12, 0xFF65728A, false);
             LinearLayout.LayoutParams descriptionParams = params(-1, -2);
-            descriptionParams.topMargin = dp(3);
+            descriptionParams.topMargin = dp(2);
             row.addView(description, descriptionParams);
+        }
+    }
 
-            LinearLayout actions = new LinearLayout(this);
-            actions.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams actionsParams = params(-1, -2);
-            actionsParams.topMargin = dp(8);
-            row.addView(actions, actionsParams);
-            MaterialButton rename = makeButton("Переименовать", false);
-            rename.setTextSize(13);
-            rename.setOnClickListener(v -> {
-                SshKey current = SshKeyStore.get(this, key.id);
-                if (current == null) return;
-                EditText field = input("Название ключа", current.name, InputType.TYPE_CLASS_TEXT);
-                new AlertDialog.Builder(this).setTitle("Переименовать ключ")
-                        .setView(field).setNegativeButton("Отмена", null)
-                        .setPositiveButton("Сохранить", (d, w) -> {
-                            String value = field.getText().toString().trim();
-                            if (!value.isEmpty()) {
-                                current.name = value;
-                                SshKeyStore.save(this, current);
-                                renderKeyList();
-                            }
-                        }).show();
+    private MaterialButton overflowButton() {
+        MaterialButton button = new MaterialButton(this);
+        button.setText("");
+        button.setIconResource(android.R.drawable.ic_menu_more);
+        button.setIconTint(ColorStateList.valueOf(
+                resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A)));
+        button.setContentDescription("Действия");
+        button.setMinWidth(dp(44));
+        button.setMinimumWidth(dp(44));
+        button.setMinimumHeight(dp(44));
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setCornerRadius(dp(22));
+        button.setElevation(0);
+        button.setBackgroundTintList(ColorStateList.valueOf(
+                resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFFFFFFF)));
+        return button;
+    }
+
+    private void showProfileActions(Profile profile, View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add("Изменить").setOnMenuItemClickListener(item -> {
+            showEditor(profile);
+            return true;
+        });
+        menu.getMenu().add("Удалить").setOnMenuItemClickListener(item -> {
+            confirmDelete(profile);
+            return true;
+        });
+        if (profile.hostFingerprint != null && !profile.hostFingerprint.isEmpty()) {
+            menu.getMenu().add("Сбросить fingerprint").setOnMenuItemClickListener(item -> {
+                confirmFingerprintReset(profile);
+                return true;
             });
-            actions.addView(rename, new LinearLayout.LayoutParams(0, dp(44), 1f));
-            MaterialButton delete = makeButton("Удалить", false);
-            delete.setOnClickListener(v -> new AlertDialog.Builder(this)
+        }
+        menu.show();
+    }
+
+    private void showKeyActions(SshKey key, View anchor) {
+        PopupMenu menu = new PopupMenu(this, anchor);
+        menu.getMenu().add("Переименовать").setOnMenuItemClickListener(item -> {
+            SshKey current = SshKeyStore.get(this, key.id);
+            if (current == null) return true;
+            EditText field = input("Название ключа", current.name, InputType.TYPE_CLASS_TEXT);
+            new AlertDialog.Builder(this).setTitle("Переименовать ключ")
+                    .setView(field).setNegativeButton("Отмена", null)
+                    .setPositiveButton("Сохранить", (d, w) -> {
+                        String value = field.getText().toString().trim();
+                        if (!value.isEmpty()) {
+                            current.name = value;
+                            SshKeyStore.save(this, current);
+                            renderKeyList();
+                        }
+                    }).show();
+            return true;
+        });
+        menu.getMenu().add("Удалить").setOnMenuItemClickListener(item -> {
+            new AlertDialog.Builder(this)
                     .setTitle("Удалить ключ?")
                     .setMessage("Ключ будет удалён из общего хранилища.")
                     .setNegativeButton("Отмена", null)
                     .setPositiveButton("Удалить", (d, w) -> {
                         SshKeyStore.delete(this, key.id);
                         renderKeyList();
-                    }).show());
-            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
-            deleteParams.leftMargin = dp(8);
-            actions.addView(delete, deleteParams);
-        }
+                    }).show();
+            return true;
+        });
+        menu.show();
     }
 
     private void showSaveKeyDialog() {
