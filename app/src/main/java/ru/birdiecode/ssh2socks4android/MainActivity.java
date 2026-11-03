@@ -430,7 +430,7 @@ public final class MainActivity extends Activity {
             } else if ("NEEDS_PASSWORD".equals(status)) {
                 setStatusChip(row, "Ожидает пароль", "CONNECTING");
             } else {
-                setStatusChip(row, "Отключено", "IDLE");
+                setStatusChip(row, "RECONNECTING".equals(status) ? "Переподключение…" : "Подготовка…", "CONNECTING");
             }
         }
     }
@@ -567,8 +567,7 @@ public final class MainActivity extends Activity {
 
     private void toggle(Profile profile) {
         String status = ProfileStore.status(this, profile.id);
-        if (("CONNECTED".equals(status)
-                || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status))) {
+        if (!"IDLE".equals(status) && !"ERROR".equals(status)) {
             startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
         } else if ("VPN".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode)) {
             requestVpnPermissionAndConnect(profile);
