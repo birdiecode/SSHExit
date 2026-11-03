@@ -48,3 +48,44 @@ After the workflow changes are merged to the default branch, open **Actions → 
 SSH passwords, jump server passwords, private keys, and key passphrases are stored as AES-GCM ciphertext using a key held in Android Keystore. Host keys are pinned after the user accepts their SHA-256 fingerprint. On first connection, compare the fingerprint shown by the app with a value obtained from the server administrator through a trusted channel before accepting it. If the server key changes, the app refuses the connection; delete and recreate the profile only after verifying the new fingerprint.
 
 Keep the device lock screen enabled. Deleting a profile removes its encrypted key material from app preferences.
+
+## SSH TUN development branch
+
+The VPN implementation in this branch is incomplete and is not ready for deployment.
+The Android consent flow, VpnService interface, protected SSH sockets, custom
+point-to-point OpenSSH channel and server configuration script are present.
+The packet codec includes the OpenSSH length and address-family fields (2 for IPv4,
+24 for IPv6). Unit tests check wire vectors, fragmented input, prefix routing,
+shell syntax and unsafe interface parameters.
+
+Still required before release:
+
+- Replace the single active connection lifecycle with independent connections.
+- Integrate the multi-tunnel packet router into one shared Android VPN.
+- Allocate collision-free tunnel addresses and coordinate global forwarding settings.
+- Implement server leases, reconciliation and independent reconnect/backoff.
+- Test actual packet transfer against Linux/OpenSSH and on Android, including DNS,
+  ProxyJump, cancellation, network changes and concurrent clients.
+
+Do not treat a successful APK build as evidence of a working VPN.
+
+### Server requirements
+
+The SSH server must support OpenSSH point-to-point tunnel forwarding:
+
+    PermitTunnel yes
+
+The SSH login must already have the permissions needed to configure its TUN,
+routes, forwarding sysctls and nftables. The app invokes no privilege escalation.
+The server needs /dev/net/tun, iproute2 and nftables. SSH exec channels must be
+allowed; ForceCommand or authorized_keys restrictions can prevent setup.
+Existing firewall forwarding policies must permit the traffic; adding an accept
+rule in an application table cannot override a drop in another base chain.
+
+IPv6 internet access requires an appropriate prefix routed to the server and
+configured in the profile. An on-link provider /64 is not automatically a delegated
+prefix for VPN clients; upstream routing or an explicitly designed NDP setup is needed.
+The current draft does not configure proxy NDP.
+
+Only use an isolated test server for development. In particular, global forwarding
+restoration and fixed IPv4 tunnel addresses are not yet safe for concurrent clients.
