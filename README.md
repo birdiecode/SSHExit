@@ -1,4 +1,4 @@
-# SSH2SOCKS4Android
+# SSHExit
 
 An Android app for managing SSH connection profiles and starting a local SOCKS5 proxy through an SSH dynamic port forward, equivalent to ssh -N -D LOCAL_PORT -i KEY -J JUMP USER@HOST.
 
@@ -14,6 +14,12 @@ An Android app for managing SSH connection profiles and starting a local SOCKS5 
 - Verify server host keys with a trust-on-first-use prompt and pin the accepted fingerprint for later connections.
 
 The app opens a local SOCKS5 listener on 127.0.0.1 only. Configure a SOCKS5-aware app to use the displayed address. Android does not automatically route all device traffic through this local proxy.
+
+## Android identity
+
+The application is named **SSHExit**, with application ID `ru.birdiecode.sshexit`.
+Android installs it separately from the earlier `ru.birdiecode.ssh2socks4android` app.
+Saved profiles, passwords and private keys in the old installation are not transferred automatically.
 
 ## Build
 
@@ -33,7 +39,7 @@ Use the same strong password for the keystore and key entry. Back up the keystor
 
 With GitHub CLI authenticated to this repository, add the signing values as repository secrets:
 
-    REPO=birdiecode/ssh2socks4android
+    REPO=birdiecode/SSHExit
     base64 < "$HOME/ssh2socks-release.p12" | tr -d '\n' | gh secret set ANDROID_KEYSTORE_BASE64 --repo "$REPO"
     gh secret set ANDROID_KEY_ALIAS --repo "$REPO" --body ssh2socks-release
     read -rsp "Keystore password: " KEYSTORE_PASSWORD; printf '\n'
