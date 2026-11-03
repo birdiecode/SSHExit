@@ -86,7 +86,7 @@ jobs:
           path = Path("app/build.gradle")
           source = path.read_text()
           code_pattern = re.compile(r"(?m)^(\s*versionCode\s+)(\d+)(\s*)$")
-          name_pattern = re.compile(r'(?m)^(\s*versionName\s+")[^"]*("\s*)$')
+          name_pattern = re.compile(r"""(?m)^(\s*versionName\s+)(['"])[^'"]*\2(\s*)$""")
 
           code_matches = list(code_pattern.finditer(source))
           name_matches = list(name_pattern.finditer(source))
@@ -100,7 +100,7 @@ jobs:
               count=1,
           )
           source = name_pattern.sub(
-              lambda match: f'{match.group(1)}{os.environ["APP_VERSION"]}{match.group(2)}',
+              lambda match: f"{match.group(1)}{match.group(2)}{os.environ['APP_VERSION']}{match.group(2)}{match.group(3)}",
               source,
               count=1,
           )
