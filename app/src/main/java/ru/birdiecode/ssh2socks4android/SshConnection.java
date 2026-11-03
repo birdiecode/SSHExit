@@ -81,6 +81,7 @@ final class SshConnection {
     boolean usesVpn() { return vpnRequested; }
     void shutdown() {
         if (!shutdownRequested.compareAndSet(false, true)) return;
+        if ("NEEDS_SERVER_CONFIG".equals(state)) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Пользователь отменил серверный план; настройки не применялись");
         cancelled = true;
         setStatus(activeProfileId, "IDLE", "Disconnected");
         worker.shutdownNow();
@@ -327,6 +328,8 @@ final class SshConnection {
 
 
     private void completeConnection(Profile target) throws Exception {
+        String targetId = activeProfileId;
+        List<Profile> chain = resolveChain(target);
         boolean vpnMode = !"SOCKS5".equals(target.connectionMode);
         boolean socksMode = !"VPN".equals(target.connectionMode);
         Session previous = activeSession;
