@@ -23,6 +23,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
@@ -713,6 +715,64 @@ public final class MainActivity extends Activity {
         form.addView(route);
         form.addView(localPort);
 
+        TextView modeTitle = text("Режим подключения", 16, 0xFF152033, true);
+        LinearLayout.LayoutParams modeTitleParams = params(-1, -2);
+        modeTitleParams.topMargin = dp(16);
+        form.addView(modeTitle, modeTitleParams);
+        String[] modeValues = {"SOCKS5", "VPN", "BOTH"};
+        String[] modeLabels = {"SOCKS5", "VPN (SSH TUN)", "SOCKS5 + VPN"};
+        Spinner mode = new Spinner(this);
+        mode.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, modeLabels));
+        int modeIndex = 0;
+        for (int i = 0; i < modeValues.length; i++) {
+            if (modeValues[i].equals(profile.connectionMode)) modeIndex = i;
+        }
+        mode.setSelection(modeIndex);
+        form.addView(mode);
+
+        LinearLayout vpnSettings = new LinearLayout(this);
+        vpnSettings.setOrientation(LinearLayout.VERTICAL);
+        vpnSettings.setPadding(0, dp(8), 0, dp(4));
+        CheckBox vpnIpv4 = checkBox("IPv4", profile.vpnIpv4);
+        CheckBox vpnIpv6 = checkBox("IPv6", profile.vpnIpv6);
+        CheckBox vpnFullTunnel = checkBox("Полный туннель", profile.vpnFullTunnel);
+        CheckBox vpnPrimary = checkBox("Использовать как основной VPN", profile.vpnPrimary);
+        CheckBox vpnFailover = checkBox("Разрешить резервное переключение", profile.vpnFailover);
+        CheckBox vpnReconnect = checkBox("Автоматически переподключаться", profile.vpnAutoReconnect);
+        EditText vpnMtu = input("MTU (576–9000)", String.valueOf(profile.vpnMtu), InputType.TYPE_CLASS_NUMBER);
+        EditText vpnDns = input("DNS-серверы через запятую", profile.vpnDnsServers, InputType.TYPE_CLASS_TEXT);
+        EditText vpnRoutes = new EditText(this);
+        vpnRoutes.setHint("Маршруты CIDR, по одному на строку (для split tunneling)");
+        vpnRoutes.setText(profile.vpnRoutes);
+        vpnRoutes.setMinLines(2);
+        vpnRoutes.setMaxLines(5);
+        vpnRoutes.setGravity(Gravity.TOP | Gravity.START);
+        vpnRoutes.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        EditText vpnPriority = input("Приоритет маршрута", String.valueOf(profile.vpnRoutePriority),
+                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        EditText vpnInterface = input("Внешний интерфейс сервера (пусто — автоматически)",
+                profile.vpnExternalInterface, InputType.TYPE_CLASS_TEXT);
+        vpnSettings.addView(vpnIpv4);
+        vpnSettings.addView(vpnIpv6);
+        vpnSettings.addView(vpnFullTunnel);
+        vpnSettings.addView(vpnMtu);
+        vpnSettings.addView(vpnDns);
+        vpnSettings.addView(vpnRoutes);
+        vpnSettings.addView(vpnPriority);
+        vpnSettings.addView(vpnPrimary);
+        vpnSettings.addView(vpnFailover);
+        vpnSettings.addView(vpnReconnect);
+        vpnSettings.addView(vpnInterface);
+        form.addView(vpnSettings);
+        vpnSettings.setVisibility(modeIndex == 0 ? View.GONE : View.VISIBLE);
+        mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                vpnSettings.setVisibility(position == 0 ? View.GONE : View.VISIBLE);
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(form);
@@ -734,6 +794,25 @@ public final class MainActivity extends Activity {
                 }
                 if (socksPortValue < 1024) throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
 
+                int vpnMtuValue = parsePort(vpnMtu.getText().toString(), "MTU");
+                if (vpnMtuValue < 576 || vpnMtuValue > 9000) {
+                    throw new IllegalArgumentException("MTU должен быть в диапазоне 576–9000");
+                }
+                if (!vpnIpv4.isChecked() && !vpnIpv6.isChecked()) {
+                    throw new IllegalArgumentException("Включите IPv4, IPv6 или оба протокола");
+                }
+                int vpnPriorityValue = Integer.parseInt(vpnPriority.getText().toString().trim());
+                if (vpnPriorityValue < -1000 || vpnPriorityValue > 1000) {
+                    throw new IllegalArgumentException("Приоритет должен быть от -1000 до 1000");
+                }
+                String interfaceValue = vpnInterface.getText().toString().trim();
+                if (!interfaceValue.isEmpty() && !interfaceValue.matches("[A-Za-z0-9_.-]{1,15}")) {
+                    throw new IllegalArgumentException("Недопустимое имя сетевого интерфейса");
+                }
+                String routeText = vpnRoutes.getText().toString().trim();
+                if (!vpnFullTunnel.isChecked() && mode.getSelectedItemPosition() != 0 && routeText.isEmpty()) {
+                    throw new IllegalArgumentException("Для split tunneling укажите хотя бы один маршрут CIDR");
+                }
                 Profile jump = options.get(route.getSelectedItemPosition());
                 String jumpId = jump == null ? "" : jump.id;
                 if (!jumpId.isEmpty() && wouldCreateCycle(profile.id, jumpId)) {
@@ -745,6 +824,18 @@ public final class MainActivity extends Activity {
                 profile.username = userValue;
                 profile.sshPort = sshPortValue;
                 profile.localPort = socksPortValue;
+                profile.connectionMode = modeValues[mode.getSelectedItemPosition()];
+                profile.vpnIpv4 = vpnIpv4.isChecked();
+                profile.vpnIpv6 = vpnIpv6.isChecked();
+                profile.vpnMtu = vpnMtuValue;
+                profile.vpnDnsServers = vpnDns.getText().toString().trim();
+                profile.vpnFullTunnel = vpnFullTunnel.isChecked();
+                profile.vpnRoutes = routeText;
+                profile.vpnRoutePriority = vpnPriorityValue;
+                profile.vpnPrimary = vpnPrimary.isChecked();
+                profile.vpnFailover = vpnFailover.isChecked();
+                profile.vpnAutoReconnect = vpnReconnect.isChecked();
+                profile.vpnExternalInterface = interfaceValue;
                 profile.jumpProfileId = jumpId;
                 profile.jumpHost = "";
                 profile.jumpUsername = "";
@@ -996,6 +1087,18 @@ public final class MainActivity extends Activity {
     private Profile copy(Profile source) {
         Profile p = new Profile(source.name, source.host, source.sshPort, source.username, source.localPort);
         p.id = source.id;
+        p.connectionMode = source.connectionMode;
+        p.vpnIpv4 = source.vpnIpv4;
+        p.vpnIpv6 = source.vpnIpv6;
+        p.vpnMtu = source.vpnMtu;
+        p.vpnDnsServers = source.vpnDnsServers;
+        p.vpnFullTunnel = source.vpnFullTunnel;
+        p.vpnRoutes = source.vpnRoutes;
+        p.vpnRoutePriority = source.vpnRoutePriority;
+        p.vpnPrimary = source.vpnPrimary;
+        p.vpnFailover = source.vpnFailover;
+        p.vpnAutoReconnect = source.vpnAutoReconnect;
+        p.vpnExternalInterface = source.vpnExternalInterface;
         p.jumpProfileId = source.jumpProfileId;
         p.keyId = source.keyId;
         p.encryptedKey = source.encryptedKey;
@@ -1009,6 +1112,14 @@ public final class MainActivity extends Activity {
         p.jumpKeyId = source.jumpKeyId;
         p.jumpFingerprint = source.jumpFingerprint;
         return p;
+    }
+
+    private CheckBox checkBox(String label, boolean checked) {
+        CheckBox box = new CheckBox(this);
+        box.setText(label);
+        box.setChecked(checked);
+        box.setMinHeight(dp(48));
+        return box;
     }
 
     private EditText input(String hint, String value, int inputType) {
