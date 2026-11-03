@@ -7,9 +7,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * Encodes Android TUN packets using OpenSSH's tun@openssh.com packet framing.
- * The channel data stream is a byte stream; packet boundaries are carried by a
- * uint32 network-byte-order length before each layer-3 packet.
+ * Internal packet queue framing: uint32 length, OpenBSD AF, then the IP datagram.
+ * OpenSshTunChannel removes/restores the queue length at the SSH boundary.
+ * CHANNEL_DATA carries exactly one AF + IP datagram; its SSH string supplies the wire length.
  */
 public final class TunPacketStreams {
     private TunPacketStreams() {}
