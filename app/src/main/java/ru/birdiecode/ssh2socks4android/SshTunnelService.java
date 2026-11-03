@@ -44,11 +44,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class SshTunnelService extends VpnService {
-    static final String ACTION_CONNECT = "ru.birdiecode.ssh2socks4android.CONNECT";
-    static final String ACTION_TRUST = "ru.birdiecode.ssh2socks4android.TRUST";
-    static final String ACTION_STOP = "ru.birdiecode.ssh2socks4android.STOP";
+    static final String ACTION_CONNECT = "ru.birdiecode.sshexit.CONNECT";
+    static final String ACTION_TRUST = "ru.birdiecode.sshexit.TRUST";
+    static final String ACTION_STOP = "ru.birdiecode.sshexit.STOP";
     static final String EXTRA_PROFILE_ID = "profile_id";
-    static final String ACTION_PASSWORD = "ru.birdiecode.ssh2socks4android.PASSWORD";
+    static final String ACTION_PASSWORD = "ru.birdiecode.sshexit.PASSWORD";
     static final String EXTRA_NODE_ID = "node_id";
     static final String EXTRA_PASSWORD = "password";
 
@@ -171,7 +171,7 @@ public final class SshTunnelService extends VpnService {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-                .setContentTitle(title).setContentText(text)
+                .setContentTitle(getString(R.string.app_name) + " · " + title).setContentText(text)
                 .setStyle(new Notification.BigTextStyle().bigText(text))
                 .setContentIntent(contentIntent)
                 .setOngoing("SSH tunnel connected".equals(title) || "Connecting".equals(title));
@@ -183,7 +183,7 @@ public final class SshTunnelService extends VpnService {
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "SSH tunnel", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Shows the state of the SSH SOCKS5 tunnel");
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
