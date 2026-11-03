@@ -55,6 +55,9 @@ public final class MainActivity extends Activity {
     private final Map<String, TextView> rowStatuses = new HashMap<>();
     private final Map<String, MaterialButton> rowActions = new HashMap<>();
     private final Map<String, TextView> rowFingerprints = new HashMap<>();
+    private final Map<String, View> rowErrorPanels = new HashMap<>();
+    private final Map<String, TextView> rowErrorSummaries = new HashMap<>();
+    private final Map<String, TextView> rowTechnicalDetails = new HashMap<>();
 
     private LinearLayout list;
     private LinearLayout keyList;
@@ -202,6 +205,9 @@ public final class MainActivity extends Activity {
         rowStatuses.clear();
         rowActions.clear();
         rowFingerprints.clear();
+        rowErrorPanels.clear();
+        rowErrorSummaries.clear();
+        rowTechnicalDetails.clear();
 
         List<Profile> profiles = ProfileStore.all(this);
         if (profiles.isEmpty()) {
@@ -252,7 +258,7 @@ public final class MainActivity extends Activity {
             titleRow.addView(more, moreParams);
             more.setOnClickListener(v -> showProfileActions(profile, more));
 
-            TextView endpoint = text(profile.username + "@" + profile.host + ":" + profile.sshPort,
+            TextView endpoint = text(profile.username + "@" + formatHostPort(profile.host, profile.sshPort),
                     14, 0xFF33415C, false);
             LinearLayout.LayoutParams endpointParams = params(-1, -2);
             endpointParams.topMargin = dp(8);
@@ -293,6 +299,38 @@ public final class MainActivity extends Activity {
             content.addView(fingerprint, fingerprintParams);
             rowFingerprints.put(profile.id, fingerprint);
             updateFingerprintStatus(fingerprint, profile);
+
+            LinearLayout errorPanel = new LinearLayout(this);
+            errorPanel.setOrientation(LinearLayout.VERTICAL);
+            errorPanel.setPadding(dp(12), dp(10), dp(12), dp(10));
+            GradientDrawable errorBackground = new GradientDrawable();
+            errorBackground.setColor(0x1FB42318);
+            errorBackground.setCornerRadius(dp(12));
+            errorPanel.setBackground(errorBackground);
+            LinearLayout.LayoutParams errorPanelParams = params(-1, -2);
+            errorPanelParams.topMargin = dp(10);
+            content.addView(errorPanel, errorPanelParams);
+            TextView errorSummary = text("", 13, 0xFFB42318, true);
+            errorPanel.addView(errorSummary);
+            TextView technicalToggle = text("Технические подробности  ▾", 12, 0xFF2457D6, true);
+            LinearLayout.LayoutParams technicalToggleParams = params(-1, -2);
+            technicalToggleParams.topMargin = dp(6);
+            errorPanel.addView(technicalToggle, technicalToggleParams);
+            TextView technicalDetails = text("", 12, 0xFF65728A, false);
+            technicalDetails.setTextIsSelectable(true);
+            technicalDetails.setVisibility(View.GONE);
+            LinearLayout.LayoutParams technicalDetailsParams = params(-1, -2);
+            technicalDetailsParams.topMargin = dp(6);
+            errorPanel.addView(technicalDetails, technicalDetailsParams);
+            technicalToggle.setOnClickListener(v -> {
+                boolean show = technicalDetails.getVisibility() != View.VISIBLE;
+                technicalDetails.setVisibility(show ? View.VISIBLE : View.GONE);
+                technicalToggle.setText(show ? "Скрыть подробности  ▴" : "Технические подробности  ▾");
+            });
+            errorPanel.setVisibility(View.GONE);
+            rowErrorPanels.put(profile.id, errorPanel);
+            rowErrorSummaries.put(profile.id, errorSummary);
+            rowTechnicalDetails.put(profile.id, technicalDetails);
 
             MaterialButton action = makeButton("Подключить", true);
             action.setOnClickListener(v -> toggle(profile));
@@ -342,7 +380,7 @@ public final class MainActivity extends Activity {
             overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
             askForPassword(profileId, detail);
         } else if ("ERROR".equals(status)) {
-            overallStatus.setText("Не удалось подключиться  ·  нажмите для подробностей");
+            overallStatus.setText("Не удалось подключиться  ·  описание ошибки в карточке хоста");
             overallStatus.setTextColor(0xFFB42318);
         } else {
             overallStatus.setText("Нет активного подключения");
@@ -355,6 +393,16 @@ public final class MainActivity extends Activity {
             Profile rowProfile = ProfileStore.get(this, id);
             TextView fingerprint = rowFingerprints.get(id);
             if (rowProfile != null && fingerprint != null) updateFingerprintStatus(fingerprint, rowProfile);
+            View errorPanel = rowErrorPanels.get(id);
+            TextView errorSummary = rowErrorSummaries.get(id);
+            TextView technicalDetails = rowTechnicalDetails.get(id);
+            boolean showError = id.equals(profileId) && "ERROR".equals(status);
+            if (errorPanel != null) errorPanel.setVisibility(showError ? View.VISIBLE : View.GONE);
+            if (showError) {
+                String rawError = detail == null || detail.trim().isEmpty() ? "Подробности отсутствуют." : detail;
+                if (errorSummary != null) errorSummary.setText(friendlyConnectionError(rawError));
+                if (technicalDetails != null) technicalDetails.setText(rawError);
+            }
             if (row == null || action == null) continue;
             if (!id.equals(profileId)) {
                 boolean hasFingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
@@ -369,14 +417,7 @@ public final class MainActivity extends Activity {
                             && !rowProfile.observedFingerprint.isEmpty();
                     setStatusChip(row, fingerprintError ? "Fingerprint не совпал" : "Ошибка",
                             "ERROR");
-                    row.setOnClickListener(v -> new AlertDialog.Builder(this)
-                            .setTitle("Ошибка подключения")
-                            .setMessage(ProfileStore.statusDetail(this))
-                            .setPositiveButton("Закрыть", null)
-                            .setNeutralButton("Технические подробности", (d, w) ->
-                                    new AlertDialog.Builder(this).setTitle("Технические подробности")
-                                            .setMessage(ProfileStore.statusDetail(this))
-                                            .setPositiveButton("Закрыть", null).show()).show());
+                    row.setOnClickListener(null);
                 } else if ("CONNECTED".equals(status)) {
                     setStatusChip(row, "Подключено", "CONNECTED");
                 } else if ("CONNECTING".equals(status)) {
@@ -394,6 +435,25 @@ public final class MainActivity extends Activity {
                 styleButton(action, !running);
             }
         }
+    }
+
+    private String friendlyConnectionError(String rawError) {
+        String lower = rawError.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("channel is not opened")) {
+            return "SSH-сервер не открыл TCP-канал до следующего узла. При ProxyJump проверьте IPv6-маршрут с jump-сервера и разрешение TCP forwarding.";
+        }
+        if (lower.contains("fingerprint")) {
+            return "Отпечаток ключа сервера не совпал с доверенным. Подключение остановлено для защиты соединения.";
+        }
+        return "Подключение не установлено. Техническую причину можно раскрыть ниже.";
+    }
+
+    private String formatHostPort(String host, int port) {
+        String value = host == null ? "" : host.trim();
+        if (value.contains(":") && !(value.startsWith("[") && value.endsWith("]"))) {
+            value = "[" + value + "]";
+        }
+        return value + ":" + port;
     }
 
     private TextView statusChip() {
