@@ -24,6 +24,7 @@ final class Socks5Proxy {
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private volatile ServerSocket server;
     private volatile ExecutorService workers;
+    private volatile Thread acceptThread;
 
     Socks5Proxy(Session session, int port) {
         this.session = session;
@@ -37,6 +38,7 @@ final class Socks5Proxy {
         server = socket;
         workers = Executors.newCachedThreadPool();
         Thread acceptor = new Thread(this::acceptLoop, "socks5-accept");
+        acceptThread = acceptor;
         acceptor.setDaemon(true);
         acceptor.start();
     }
@@ -46,6 +48,12 @@ final class Socks5Proxy {
         server = null;
         if (listener != null) {
             try { listener.close(); } catch (IOException ignored) {}
+        }
+        Thread acceptor = acceptThread;
+        acceptThread = null;
+        if (acceptor != null && acceptor != Thread.currentThread()) {
+            try { acceptor.join(2000); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         for (Socket client : clients) closeQuietly(client);
         ExecutorService pool = workers;
