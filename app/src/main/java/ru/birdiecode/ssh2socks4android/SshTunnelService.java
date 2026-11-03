@@ -144,14 +144,18 @@ public final class SshTunnelService extends VpnService {
                 "Connecting through " + chainLabel(chain));
         updateNotification("Connecting", chainLabel(chain));
 
+        boolean vpnMode = "VPN".equals(target.connectionMode) || "BOTH".equals(target.connectionMode);
+        boolean socksMode = !"VPN".equals(target.connectionMode);
         Session previous = null;
         try {
+            if (vpnMode) establishVpnInterface(target);
             for (Profile node : chain) {
                 JSch jsch = new JSch();
                 addAllVaultKeys(jsch);
                 PinnedHostKeyRepository pinning = new PinnedHostKeyRepository(node.hostFingerprint);
                 jsch.setHostKeyRepository(pinning);
                 Session session = jsch.getSession(node.username, normalizeSshHost(node.host), node.sshPort);
+                if (vpnMode) session.setSocketFactory(protectedSocketFactory());
                 session.setConfig("StrictHostKeyChecking", "yes");
                 String promptedPassword = pendingPasswords.get(node.id);
                 boolean hasSavedPassword = node.encryptedPassword != null && !node.encryptedPassword.isEmpty();
@@ -212,13 +216,20 @@ public final class SshTunnelService extends VpnService {
             }
 
             activeSession = previous;
-            Socks5Proxy proxy = new Socks5Proxy(previous, target.localPort);
-            proxy.start();
-            activeProxy = proxy;
-            ProfileStore.setStatus(this, targetId, "CONNECTED",
-                    "SOCKS5 listening on 127.0.0.1:" + target.localPort);
-            updateNotification("SSH tunnel connected",
-                    "SOCKS5 127.0.0.1:" + target.localPort + " via " + chainLabel(chain));
+            StringBuilder connectedDetails = new StringBuilder();
+            if (vpnMode) {
+                startVpnTunnel(target, previous);
+                connectedDetails.append("SSH TUN VPN active");
+            }
+            if (socksMode) {
+                Socks5Proxy proxy = new Socks5Proxy(previous, target.localPort);
+                proxy.start();
+                activeProxy = proxy;
+                if (connectedDetails.length() > 0) connectedDetails.append(" · ");
+                connectedDetails.append("SOCKS5 127.0.0.1:").append(target.localPort);
+            }
+            ProfileStore.setStatus(this, targetId, "CONNECTED", connectedDetails.toString());
+            updateNotification("SSH tunnel connected", connectedDetails + " via " + chainLabel(chain));
         } catch (Exception e) {
             String message = e instanceof NodeException
                     ? ((NodeException) e).getMessage()
