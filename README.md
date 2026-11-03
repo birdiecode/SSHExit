@@ -116,8 +116,12 @@ own configuration; they do not disable or override existing firewall rules.
 
 **Apply and connect** saves the selected options to the host profile and continues
 the waiting connection. **Cancel** closes the SSH connection without applying the
-server plan. A new VPN connection, including a reconnect, asks for confirmation
-again. SOCKS5-only connections do not show this dialog.
+server plan. Select **Больше не спрашивать для этого хоста** before applying to
+reuse the saved settings automatically for this host, including reconnects. Cancel
+does not save this preference. Re-enable **Показывать настройки сервера перед
+подключением** in the host editor to restore the dialog. Existing profiles ask by
+default. Automatic use still logs the full plan and server acknowledgements.
+SOCKS5-only connections do not show this dialog.
 
 At INFO verbosity the log distinguishes **ПЛАН** (approved commands),
 **ПРИМЕНЕНО** (steps acknowledged by the server after successful execution),
