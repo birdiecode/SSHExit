@@ -439,8 +439,9 @@ public final class MainActivity extends Activity {
 
     private String friendlyConnectionError(String rawError) {
         String lower = rawError.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("channel is not opened")) {
-            return "SSH-сервер не открыл TCP-канал до следующего узла. При ProxyJump проверьте IPv6-маршрут с jump-сервера и разрешение TCP forwarding.";
+        if (lower.contains("channel is not opened")
+                || lower.contains("could not open a tcp forwarding channel")) {
+            return "SSH-сервер не открыл TCP-канал до целевого узла. При ProxyJump проверьте, доступен ли IPv6-адрес с jump-сервера и разрешён ли на нём TCP forwarding.";
         }
         if (lower.contains("fingerprint")) {
             return "Отпечаток ключа сервера не совпал с доверенным. Подключение остановлено для защиты соединения.";
