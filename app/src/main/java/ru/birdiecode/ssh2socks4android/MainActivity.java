@@ -369,34 +369,24 @@ public final class MainActivity extends Activity {
 
     private void refreshStatuses() {
         if (overallStatus == null) return;
-        String status = ProfileStore.status(this);
-        String profileId = ProfileStore.statusProfile(this);
-        String detail = ProfileStore.statusDetail(this);
-        Profile active = ProfileStore.get(this, profileId);
-
-        if ("CONNECTED".equals(status)) {
-            overallStatus.setText("Подключено  ·  SOCKS5 127.0.0.1:" + (active == null ? "" : active.localPort));
-            overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
-        } else if ("CONNECTING".equals(status)) {
-            overallStatus.setText("Подключение…");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
-        } else if ("NEEDS_TRUST".equals(status)) {
-            overallStatus.setText("Нужно подтвердить fingerprint сервера");
-            overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
-            askToTrust(profileId, detail);
-        } else if ("NEEDS_PASSWORD".equals(status)) {
-            overallStatus.setText("Требуется пароль SSH");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurface, 0xFF33415C));
-            askForPassword(profileId, detail);
-        } else if ("ERROR".equals(status)) {
-            overallStatus.setText("Не удалось подключиться  ·  описание ошибки в карточке хоста");
-            overallStatus.setTextColor(0xFFB42318);
-        } else {
-            overallStatus.setText("Нет активного подключения");
-            overallStatus.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
+        int connected = 0, pending = 0;
+        String requestId = "", requestState = "", requestDetail = "";
+        for (Profile p : ProfileStore.all(this)) {
+            String state = ProfileStore.status(this, p.id);
+            if ("CONNECTED".equals(state)) connected++;
+            else if (!"IDLE".equals(state) && !"ERROR".equals(state)) pending++;
+            if (requestId.isEmpty() && ("NEEDS_TRUST".equals(state) || "NEEDS_PASSWORD".equals(state))) {
+                requestId = p.id; requestState = state; requestDetail = ProfileStore.statusDetail(this, p.id);
+            }
         }
+        overallStatus.setText("Подключено: " + connected + (pending > 0 ? " · В процессе: " + pending : ""));
+        overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
+        if ("NEEDS_TRUST".equals(requestState)) askToTrust(requestId, requestDetail);
+        else if ("NEEDS_PASSWORD".equals(requestState)) askForPassword(requestId, requestDetail);
 
         for (String id : rowStatuses.keySet()) {
+            String status = ProfileStore.status(this, id);
+            String detail = ProfileStore.statusDetail(this, id);
             TextView row = rowStatuses.get(id);
             Profile rowProfile = ProfileStore.get(this, id);
             TextView fingerprint = rowFingerprints.get(id);
@@ -404,7 +394,7 @@ public final class MainActivity extends Activity {
             View errorPanel = rowErrorPanels.get(id);
             TextView errorSummary = rowErrorSummaries.get(id);
             TextView technicalDetails = rowTechnicalDetails.get(id);
-            boolean showError = id.equals(profileId) && "ERROR".equals(status);
+            boolean showError = "ERROR".equals(status);
             boolean errorWasVisible = errorPanel != null && errorPanel.getVisibility() == View.VISIBLE;
             if (errorPanel != null) errorPanel.setVisibility(showError ? View.VISIBLE : View.GONE);
             if (showError && !errorWasVisible && errorPanel != null) {
@@ -422,7 +412,7 @@ public final class MainActivity extends Activity {
             }
             if (row == null) continue;
 
-            if (!id.equals(profileId)) {
+            if ("IDLE".equals(status)) {
                 boolean hasFingerprintError = rowProfile != null && rowProfile.observedFingerprint != null
                         && !rowProfile.observedFingerprint.isEmpty();
                 setStatusChip(row, hasFingerprintError ? "Fingerprint не совпал" : "Отключено",
@@ -497,7 +487,10 @@ public final class MainActivity extends Activity {
         chip.setBackground(background);
     }
 
+    private boolean connectionPromptOpen;
+
     private void askToTrust(String profileId, String fingerprint) {
+        if (connectionPromptOpen) return;
         if (fingerprint == null || fingerprint.isEmpty() || fingerprint.equals(promptedFingerprint)) return;
         promptedFingerprint = fingerprint;
         Profile profile = ProfileStore.get(this, profileId);
@@ -514,6 +507,7 @@ public final class MainActivity extends Activity {
             shownFingerprint = fingerprint.substring(fingerprint.indexOf(':') + 1);
         }
         String server = node.username + "@" + node.host + ":" + node.sshPort;
+        connectionPromptOpen = true;
         new AlertDialog.Builder(this)
                 .setTitle("Подтвердите SSH-сервер")
                 .setMessage("Сервер: " + server
@@ -527,10 +521,11 @@ public final class MainActivity extends Activity {
                     promptedFingerprint = "";
                     startTunnelAction(SshTunnelService.ACTION_STOP, profileId);
                 })
-                .show();
+                .show().setOnDismissListener(dialog -> connectionPromptOpen = false);
     }
 
     private void askForPassword(String targetId, String request) {
+        if (connectionPromptOpen) return;
         if (request == null || !request.startsWith("NODE:") || request.equals(promptedPasswordRequest)) return;
         String nodeId = request.substring("NODE:".length());
         Profile node = ProfileStore.get(this, nodeId);
@@ -538,6 +533,7 @@ public final class MainActivity extends Activity {
         promptedPasswordRequest = request;
         EditText password = input("SSH-пароль для " + node.username + "@" + node.host, "",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        connectionPromptOpen = true;
         new AlertDialog.Builder(this)
                 .setTitle("Требуется пароль SSH")
                 .setMessage("Пароль запрашивается для " + node.username + "@" + node.host + ":" + node.sshPort
@@ -551,7 +547,7 @@ public final class MainActivity extends Activity {
                     promptedPasswordRequest = "";
                     String value = password.getText().toString();
                     if (value.isEmpty()) {
-                        Toast.makeText(this, "Введите пароль или отмените подключение", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "Введите пароль или отмените подключение", Toast.LENGTH_LONG).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
                         startTunnelAction(SshTunnelService.ACTION_STOP, targetId);
                         return;
                     }
@@ -564,15 +560,14 @@ public final class MainActivity extends Activity {
                         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
                         else startService(intent);
                     } catch (Exception e) {
-                        Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show();
+                        Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
                     }
-                }).show();
+                }).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
     }
 
     private void toggle(Profile profile) {
-        String status = ProfileStore.status(this);
-        String activeId = ProfileStore.statusProfile(this);
-        if (profile.id.equals(activeId) && ("CONNECTED".equals(status)
+        String status = ProfileStore.status(this, profile.id);
+        if (("CONNECTED".equals(status)
                 || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status))) {
             startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
         } else if ("VPN".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode)) {
@@ -624,7 +619,7 @@ public final class MainActivity extends Activity {
                 .setMessage(message.toString())
                 .setNegativeButton("Отмена", null)
                 .setPositiveButton("Удалить", (dialog, which) -> {
-                    if (profile.id.equals(ProfileStore.statusProfile(this))) {
+                    if (!"IDLE".equals(ProfileStore.status(this, profile.id))) {
                         startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     }
                     ProfileStore.delete(this, profile.id);
@@ -646,9 +641,9 @@ public final class MainActivity extends Activity {
             view.setTextColor(resolveColor(com.google.android.material.R.attr.colorOnSurfaceVariant, 0xFF65728A));
             return;
         }
-        String pending = ProfileStore.statusDetail(this);
+        String pending = ProfileStore.statusDetail(this, profile.id);
         String nodePrefix = "NODE:" + profile.id + ":";
-        if ("NEEDS_TRUST".equals(ProfileStore.status(this)) && pending != null && pending.startsWith(nodePrefix)) {
+        if ("NEEDS_TRUST".equals(ProfileStore.status(this, profile.id)) && pending != null && pending.startsWith(nodePrefix)) {
             view.setText("Fingerprint ожидает подтверждения\n" + pending.substring(nodePrefix.length()));
             view.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
         } else {
