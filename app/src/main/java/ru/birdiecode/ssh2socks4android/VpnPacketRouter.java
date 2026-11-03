@@ -66,7 +66,10 @@ public final class VpnPacketRouter {
                 throw new IOException("Invalid IP packet length");
             }
             synchronized (framed) {
-                framed.writeInt(packet.length);
+                int version = (packet[0] >>> 4) & 15;
+                if (version != 4 && version != 6) throw new IOException("Unsupported IP version");
+                framed.writeInt(packet.length + 4);
+                framed.writeInt(version == 4 ? 2 : 24);
                 framed.write(packet);
                 framed.flush();
             }
