@@ -101,12 +101,15 @@ final class SshConnection {
         if (!"CONNECTED".equals(state) || cancelled) return;
         String failure = "";
         if (activeSession == null || !activeSession.isConnected()) failure = "Закрыта SSH-сессия";
-        else if (activeTun != null && activeTun.isClosed()) failure = "Закрыт канал SSH TUN";
+        else if (activeTun != null && activeTun.isClosed()) failure = "Закрыт канал SSH TUN: " + activeTun.getFailureReason();
         else if (serverConfigChannel != null && serverConfigChannel.isClosed())
             failure = "Завершился серверный процесс настройки TUN, exit=" + serverConfigChannel.getExitStatus();
         boolean lost = !failure.isEmpty();
         if (lost && System.currentTimeMillis() - connectedAt >= 60000) retryAttempt = 0;
-        if (lost) retryOrFail(failure);
+        if (lost) {
+            AppLog.INSTANCE.record(AppLog.WARN, connectionId, failure);
+            retryOrFail(failure);
+        }
     }
 
     private void retryOrFail(String reason) {
@@ -406,6 +409,8 @@ final class SshConnection {
         if (descriptor == null) throw new IllegalStateException("VPN-интерфейс не создан");
         activeTunUnit = 100000000 + new Random().nextInt(100000000);
         OpenSshTunChannel tun = new OpenSshTunChannel(activeTunUnit);
+        tun.setEventListener(event -> AppLog.INSTANCE.record(event.contains("FAILED") ? AppLog.ERROR : AppLog.TRACE,
+                connectionId, event));
         int mtu = profile.vpnMtu > 0 ? profile.vpnMtu : DEFAULT_VPN_MTU;
         tun.setInputStream(TunPacketStreams.addOpenSshFraming(
                 new FileInputStream(descriptor.getFileDescriptor()), mtu), true);
