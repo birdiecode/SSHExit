@@ -301,7 +301,7 @@ final class SshConnection {
                 connectedDetails.append("SSH TUN VPN active");
             }
             if (socksMode) {
-                Socks5Proxy proxy = new Socks5Proxy(previous, target.localPort);
+                Socks5Proxy proxy = new Socks5Proxy(previous, target.localPort, connectionId);
                 proxy.start();
                 activeProxy = proxy;
                 AppLog.INSTANCE.record(AppLog.INFO, connectionId, "SOCKS5 слушает 127.0.0.1:" + target.localPort);
