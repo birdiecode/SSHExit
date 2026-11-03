@@ -479,7 +479,7 @@ public final class MainActivity extends Activity {
             String state = ProfileStore.status(this, p.id);
             if ("CONNECTED".equals(state)) connected++;
             else if (!"IDLE".equals(state) && !"ERROR".equals(state)) pending++;
-            if (requestId.isEmpty() && ("NEEDS_TRUST".equals(state) || "NEEDS_PASSWORD".equals(state))) {
+            if (requestId.isEmpty() && ("NEEDS_TRUST".equals(state) || "NEEDS_PASSWORD".equals(state) || "NEEDS_SERVER_CONFIG".equals(state))) {
                 requestId = p.id; requestState = state; requestDetail = ProfileStore.statusDetail(this, p.id);
             }
         }
@@ -487,6 +487,7 @@ public final class MainActivity extends Activity {
         overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));
         if ("NEEDS_TRUST".equals(requestState)) askToTrust(requestId, requestDetail);
         else if ("NEEDS_PASSWORD".equals(requestState)) askForPassword(requestId, requestDetail);
+        else if ("NEEDS_SERVER_CONFIG".equals(requestState)) askForServerPlan(requestId, requestDetail);
 
         for (String id : rowStatuses.keySet()) {
             String status = ProfileStore.status(this, id);
@@ -531,6 +532,8 @@ public final class MainActivity extends Activity {
                 setStatusChip(row, "Подключение…", "CONNECTING");
             } else if ("NEEDS_TRUST".equals(status)) {
                 setStatusChip(row, "Ожидает проверки", "CONNECTING");
+            } else if ("NEEDS_SERVER_CONFIG".equals(status)) {
+                setStatusChip(row, "Ожидает настройки сервера", "CONNECTING");
             } else if ("NEEDS_PASSWORD".equals(status)) {
                 setStatusChip(row, "Ожидает пароль", "CONNECTING");
             } else {
@@ -667,6 +670,107 @@ public final class MainActivity extends Activity {
                         Toast.makeText(this, "Не удалось продолжить подключение", Toast.LENGTH_LONG).show();
                     }
                 }).show().setOnDismissListener(dialog -> connectionPromptOpen = false);
+    }
+
+    private void askForServerPlan(String targetId, String encoded) {
+        if (connectionPromptOpen) return;
+        Profile stored = ProfileStore.get(this, targetId);
+        if (stored == null) return;
+        try {
+            org.json.JSONObject request = new org.json.JSONObject(encoded);
+            String requestId = request.getString("requestId");
+            String tun = request.getString("interface"), table = request.getString("table");
+            String[] ipv6 = {request.getString("ipv6Server"), request.getString("ipv6Client")};
+            Profile draft = copy(stored);
+            LinearLayout form = new LinearLayout(this);
+            form.setOrientation(LinearLayout.VERTICAL);
+            form.setPadding(dp(16), dp(8), dp(16), dp(12));
+            TextView hint = text("SSH: " + stored.username + "@" + formatHostPort(stored.host, stored.sshPort)
+                    + "\nНастройка сервера ещё не выполнялась. Измените параметры и подтвердите план. "
+                    + "Изменения сохранятся в профиле. При новом подключении план будет показан снова.",
+                    13, 0xFF65728A, false);
+            form.addView(hint, params(-1, -2));
+            EditText wan = input("Внешний интерфейс сервера", request.optString("wan"), InputType.TYPE_CLASS_TEXT);
+            form.addView(wan, params(-1, -2));
+            wan.setVisibility(stored.vpnIpv4 ? View.VISIBLE : View.GONE);
+
+            String[] optionKeys = {"serverManageIpv4Forwarding", "serverManageIpv6Forwarding", "serverNatIpv4",
+                    "serverAcceptOutbound", "serverAcceptReturn"};
+            String[] optionNames = {"Разрешить включение IPv4 forwarding",
+                    "Разрешить включение IPv6 forwarding", "Применить NAT IPv4 (masquerade)",
+                    "Добавить accept для исходящего трафика", "Добавить accept для ответного трафика"};
+            boolean[] defaults = {stored.serverManageIpv4Forwarding, stored.serverManageIpv6Forwarding,
+                    stored.serverNatIpv4, stored.serverAcceptOutbound, stored.serverAcceptReturn};
+            CheckBox[] choices = new CheckBox[optionKeys.length];
+            for (int i = 0; i < choices.length; i++) {
+                choices[i] = new CheckBox(this);
+                choices[i].setText(optionNames[i]); choices[i].setChecked(defaults[i]);
+                form.addView(choices[i], params(-1, -2));
+            }
+            choices[0].setVisibility(stored.vpnIpv4 ? View.VISIBLE : View.GONE);
+            choices[1].setVisibility(stored.vpnIpv6 ? View.VISIBLE : View.GONE);
+            choices[2].setVisibility(stored.vpnIpv4 ? View.VISIBLE : View.GONE);
+
+            TextView preview = text("", 12, 0xFF33415C, false);
+            preview.setTypeface(Typeface.MONOSPACE);
+            preview.setTextIsSelectable(true);
+            TextView previewTitle = text("Команды применения и очистки", 15, 0xFF152033, true);
+            form.addView(previewTitle, params(-1, -2));
+            form.addView(preview, params(-1, -2));
+            Runnable update = () -> {
+                draft.vpnExternalInterface = wan.getText().toString().trim();
+                draft.serverManageIpv4Forwarding = choices[0].isChecked();
+                draft.serverManageIpv6Forwarding = choices[1].isChecked();
+                draft.serverNatIpv4 = choices[2].isChecked();
+                draft.serverAcceptOutbound = choices[3].isChecked();
+                draft.serverAcceptReturn = choices[4].isChecked();
+                try {
+                    preview.setText(ServerTunConfiguration.preview(draft, tun, table, ipv6));
+                } catch (IllegalArgumentException invalid) {
+                    preview.setText("Исправьте параметры: " + invalid.getMessage());
+                }
+            };
+            for (CheckBox choice : choices) choice.setOnCheckedChangeListener((button, checked) -> update.run());
+            wan.addTextChangedListener(new android.text.TextWatcher() {
+                public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+                public void onTextChanged(CharSequence value, int start, int before, int count) { update.run(); }
+                public void afterTextChanged(android.text.Editable value) {}
+            });
+            update.run();
+            ScrollView scroll = new ScrollView(this);
+            scroll.addView(form);
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                    .setTitle("Настройка сервера: " + (stored.name.isEmpty() ? stored.host : stored.name))
+                    .setView(scroll).setCancelable(false)
+                    .setNegativeButton("Отмена", (d, w) -> startTunnelAction(SshTunnelService.ACTION_STOP, targetId))
+                    .setPositiveButton("Применить и подключиться", null).create();
+            dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+                try {
+                    update.run();
+                    if (!"NEEDS_SERVER_CONFIG".equals(ProfileStore.status(this, targetId))
+                            || !encoded.equals(ProfileStore.statusDetail(this, targetId))) {
+                        dialog.dismiss(); return;
+                    }
+                    if (draft.vpnIpv4 && draft.vpnExternalInterface.isEmpty())
+                        throw new IllegalArgumentException("Укажите внешний интерфейс IPv4");
+                    ServerTunConfiguration.preview(draft, tun, table, ipv6);
+                    Intent intent = new Intent(this, SshTunnelService.class).setAction(SshTunnelService.ACTION_SERVER_CONFIG);
+                    intent.putExtra(SshTunnelService.EXTRA_PROFILE_ID, targetId);
+                    intent.putExtra("server_request", requestId);
+                    intent.putExtra("server_wan", draft.vpnExternalInterface);
+                    for (int i = 0; i < choices.length; i++) intent.putExtra(optionKeys[i], choices[i].isChecked());
+                    if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
+                    dialog.dismiss();
+                } catch (Exception error) {
+                    Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }));
+            connectionPromptOpen = true;
+            dialog.setOnDismissListener(ignored -> connectionPromptOpen = false);
+            dialog.show();
+        } catch (Exception error) {
+            Toast.makeText(this, "Не удалось открыть серверный план", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void toggle(Profile profile) {
@@ -1241,6 +1345,11 @@ public final class MainActivity extends Activity {
         p.vpnPrimary = source.vpnPrimary;
         p.vpnFailover = source.vpnFailover;
         p.vpnAutoReconnect = source.vpnAutoReconnect;
+        p.serverManageIpv4Forwarding = source.serverManageIpv4Forwarding;
+        p.serverManageIpv6Forwarding = source.serverManageIpv6Forwarding;
+        p.serverNatIpv4 = source.serverNatIpv4;
+        p.serverAcceptOutbound = source.serverAcceptOutbound;
+        p.serverAcceptReturn = source.serverAcceptReturn;
         p.vpnExternalInterface = source.vpnExternalInterface;
         p.jumpProfileId = source.jumpProfileId;
         p.keyId = source.keyId;
