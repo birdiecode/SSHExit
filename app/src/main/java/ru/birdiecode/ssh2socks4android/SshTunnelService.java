@@ -121,7 +121,7 @@ public final class SshTunnelService extends Service {
                 addAllVaultKeys(jsch);
                 PinnedHostKeyRepository pinning = new PinnedHostKeyRepository(node.hostFingerprint);
                 jsch.setHostKeyRepository(pinning);
-                Session session = jsch.getSession(node.username, node.host, node.sshPort);
+                Session session = jsch.getSession(node.username, normalizeSshHost(node.host), node.sshPort);
                 session.setConfig("StrictHostKeyChecking", "yes");
                 String promptedPassword = pendingPasswords.get(node.id);
                 boolean hasSavedPassword = node.encryptedPassword != null && !node.encryptedPassword.isEmpty();
@@ -213,6 +213,15 @@ public final class SshTunnelService extends Service {
         }
         Collections.reverse(reversed);
         return reversed;
+    }
+
+    private String normalizeSshHost(String host) {
+        if (host == null) return "";
+        String value = host.trim();
+        if (value.startsWith("[") && value.endsWith("]") && value.length() > 2) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     private String chainLabel(List<Profile> chain) {
