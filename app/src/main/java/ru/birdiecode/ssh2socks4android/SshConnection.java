@@ -50,6 +50,7 @@ final class SshConnection {
         void claimVpn(SshConnection connection);
         void releaseVpn(SshConnection connection);
         boolean isCurrent(SshConnection connection);
+        void cleanup(Runnable action);
     }
     private final android.content.Context context;
     private final VpnService service;
@@ -57,6 +58,8 @@ final class SshConnection {
     final String connectionId = java.util.UUID.randomUUID().toString();
     volatile String state = "CONNECTING";
     private volatile boolean cancelled;
+    private final java.util.concurrent.atomic.AtomicBoolean shutdownRequested = new java.util.concurrent.atomic.AtomicBoolean();
+    private final boolean vpnRequested;
     private final ConnectionStateMachine lifecycle = new ConnectionStateMachine();
 
     SshConnection(VpnService service, Host host, String profileId) {
@@ -64,6 +67,8 @@ final class SshConnection {
         this.service = service;
         this.host = host;
         this.activeProfileId = profileId;
+        Profile profile = ProfileStore.get(context, profileId);
+        vpnRequested = profile != null && !"SOCKS5".equals(profile.connectionMode);
         lifecycle.transition(ConnectionStateMachine.State.CONNECTING);
         worker.scheduleWithFixedDelay(this::checkHealth, 2, 2, java.util.concurrent.TimeUnit.SECONDS);
     }
@@ -72,7 +77,15 @@ final class SshConnection {
         return !cancelled && !"ERROR".equals(state) && !"IDLE".equals(state);
     }
     void execute(Runnable action) { worker.execute(() -> { if (!cancelled) action.run(); }); }
-    void shutdown() { disconnect(); worker.shutdownNow(); }
+    boolean usesVpn() { return vpnRequested; }
+    void shutdown() {
+        if (!shutdownRequested.compareAndSet(false, true)) return;
+        cancelled = true;
+        setStatus(activeProfileId, "IDLE", "Disconnected");
+        worker.shutdownNow();
+        pendingPasswords.clear();
+        host.cleanup(this::closeActiveSession);
+    }
     void password(String nodeId, String password) {
         if (!"NEEDS_PASSWORD".equals(state)) return;
         if (nodeId == null || password == null || password.isEmpty()) {
