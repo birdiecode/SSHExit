@@ -34,8 +34,35 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Assemble debug APK
+      - name: Restore signing keystore for trusted builds
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Set the ANDROID_KEYSTORE_BASE64 repository secret to sign debug APKs with the release key."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ssh2socks-release.p12"
+          chmod 600 "$RUNNER_TEMP/ssh2socks-release.p12"
+          test -s "$RUNNER_TEMP/ssh2socks-release.p12"
+
+      - name: Assemble debug APK for pull requests
+        if: github.event_name == 'pull_request'
         run: gradle --no-daemon assembleDebug
+
+      - name: Assemble debug APK signed with release key
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/ssh2socks-release.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "Missing ANDROID_KEYSTORE_PASSWORD secret."; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS secret."; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret."; exit 1; }
+          gradle --no-daemon assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
