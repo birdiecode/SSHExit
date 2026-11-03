@@ -659,6 +659,7 @@ public final class MainActivity extends Activity {
                 .setPositiveButton("Удалить", (dialog, which) -> {
                     Profile stored = ProfileStore.get(this, profile.id);
                     if (stored == null) return;
+                    startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     stored.hostFingerprint = "";
                     stored.observedFingerprint = "";
                     ProfileStore.save(this, stored);
@@ -880,6 +881,7 @@ public final class MainActivity extends Activity {
                     profile.encryptedPassword = KeyVault.encrypt(enteredPassword.getBytes(StandardCharsets.UTF_8));
                 }
 
+                startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                 ProfileStore.save(this, profile);
                 dialog.dismiss();
                 renderProfiles();
