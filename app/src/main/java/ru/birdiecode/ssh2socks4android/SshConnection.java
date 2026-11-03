@@ -67,6 +67,7 @@ final class SshConnection {
         this.service = service;
         this.host = host;
         this.activeProfileId = profileId;
+        AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Создано подключение");
         Profile profile = ProfileStore.get(context, profileId);
         vpnRequested = profile != null && !"SOCKS5".equals(profile.connectionMode);
         lifecycle.transition(ConnectionStateMachine.State.CONNECTING);
@@ -117,6 +118,7 @@ final class SshConnection {
         long ceiling = Math.min(60000L, 1000L << Math.min(retryAttempt++, 6));
         long delay = ceiling / 2 + new Random().nextInt((int) (ceiling / 2 + 1));
         setStatus(activeProfileId, "RECONNECTING", reason + "\nПовторное подключение через " + delay + " мс");
+        AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Повторная попытка " + retryAttempt + ", задержка " + delay + " мс");
         retry = worker.schedule(() -> {
             retry = null;
             if (!cancelled) connect(activeProfileId);
@@ -134,6 +136,11 @@ final class SshConnection {
         if (events.size() == 64) events.removeFirst();
         // Deliberately record states only: exceptions may contain server-controlled text.
         events.addLast(System.currentTimeMillis() + " " + connectionId + " " + state);
+        AppLog.INSTANCE.record("ERROR".equals(state) ? AppLog.ERROR :
+                "RECONNECTING".equals(state) ? AppLog.WARN : AppLog.INFO,
+                connectionId, "Состояние: " + state);
+        if ("ERROR".equals(state) || "RECONNECTING".equals(state))
+            AppLog.INSTANCE.record(AppLog.ERROR, connectionId, AppLog.errorCategory(detail));
         ProfileStore.setStatus(context, profileId, state, detail);
         host.changed(this);
     }
@@ -213,6 +220,7 @@ final class SshConnection {
         try {
             if (vpnMode) establishVpnInterface(target);
             for (Profile node : chain) {
+                AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SSH-узел " + (chain.indexOf(node) + 1) + "/" + chain.size());
                 JSch jsch = new JSch();
                 addAllVaultKeys(jsch);
                 PinnedHostKeyRepository pinning = new PinnedHostKeyRepository(node.hostFingerprint);
@@ -280,6 +288,7 @@ final class SshConnection {
                     }
                     pendingPasswords.remove(node.id);
                 }
+                AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SSH-узел аутентифицирован");
                 previous = session;
             }
 
@@ -295,6 +304,7 @@ final class SshConnection {
                 Socks5Proxy proxy = new Socks5Proxy(previous, target.localPort);
                 proxy.start();
                 activeProxy = proxy;
+                AppLog.INSTANCE.record(AppLog.INFO, connectionId, "SOCKS5 слушает 127.0.0.1:" + target.localPort);
                 if (connectedDetails.length() > 0) connectedDetails.append(" · ");
                 connectedDetails.append("SOCKS5 127.0.0.1:").append(target.localPort);
             }
@@ -303,6 +313,7 @@ final class SshConnection {
             setStatus( targetId, "CONNECTED", connectedDetails.toString());
             updateNotification("SSH tunnel connected", connectedDetails + " via " + chainLabel(chain));
         } catch (Exception e) {
+            AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Тип исключения: " + e.getClass().getSimpleName());
             String message = e instanceof NodeException
                     ? ((NodeException) e).getMessage()
                     : readableMessage(e);
@@ -359,6 +370,7 @@ final class SshConnection {
         ParcelFileDescriptor established = builder.establish();
         if (established == null) throw new IllegalStateException("Android не создал VPN-интерфейс");
         vpnInterface = established;
+        AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Android TUN создан, blocking=true, MTU=" + profile.vpnMtu);
     }
 
     private String[] vpnIpv6Addresses(Profile profile) throws Exception {
@@ -409,6 +421,7 @@ final class SshConnection {
                 new FileOutputStream(descriptor.getFileDescriptor()), mtu), true);
         tun.openOn(endpoint, 20_000);
         activeTun = tun;
+        AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SSH TUN открыт, unit=" + activeTunUnit);
         setStatus(activeProfileId, "CONFIGURING_SERVER", "Настройка сервера");
         startServerTunConfig(endpoint, profile, mtu, activeTunUnit);
     }
@@ -452,6 +465,7 @@ final class SshConnection {
                     + (diagnostic.isEmpty() ? "" : " · " + diagnostic));
         }
         serverConfigChannel = monitor;
+        AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Серверная настройка TUN завершена");
     }
 
     private String shortProfileToken(String profileId) {
@@ -579,6 +593,7 @@ final class SshConnection {
         Socks5Proxy proxy = activeProxy;
         activeProxy = null;
         if (proxy != null) proxy.stop();
+        AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Освобождение VPN и SSH ресурсов");
         closeVpnResources();
         activeSession = null;
         synchronized (activeSessions) {
