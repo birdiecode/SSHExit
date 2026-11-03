@@ -12,6 +12,7 @@ import android.content.res.Configuration;
 import android.content.res.ColorStateList;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -53,6 +54,7 @@ import java.util.Map;
 public final class MainActivity extends Activity {
     private static final int REQUEST_KEY = 100;
     private static final int REQUEST_NOTIFICATIONS = 101;
+    private static final int REQUEST_VPN = 102;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, TextView> rowStatuses = new HashMap<>();
@@ -72,6 +74,7 @@ public final class MainActivity extends Activity {
     private String pendingVaultKeyName = "";
     private String promptedFingerprint = "";
     private String promptedPasswordRequest = "";
+    private String pendingVpnProfileId = "";
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -572,8 +575,25 @@ public final class MainActivity extends Activity {
         if (profile.id.equals(activeId) && ("CONNECTED".equals(status)
                 || "CONNECTING".equals(status) || "NEEDS_TRUST".equals(status) || "NEEDS_PASSWORD".equals(status))) {
             startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
+        } else if ("VPN".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode)) {
+            requestVpnPermissionAndConnect(profile);
         } else {
             startTunnelAction(SshTunnelService.ACTION_CONNECT, profile.id);
+        }
+    }
+
+    private void requestVpnPermissionAndConnect(Profile profile) {
+        Intent consent = VpnService.prepare(this);
+        if (consent == null) {
+            startTunnelAction(SshTunnelService.ACTION_CONNECT, profile.id);
+            return;
+        }
+        pendingVpnProfileId = profile.id;
+        try {
+            startActivityForResult(consent, REQUEST_VPN);
+        } catch (Exception e) {
+            pendingVpnProfileId = "";
+            Toast.makeText(this, "Не удалось запросить разрешение на VPN", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -1152,6 +1172,16 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_VPN) {
+            String profileId = pendingVpnProfileId;
+            pendingVpnProfileId = "";
+            if (resultCode == RESULT_OK && !profileId.isEmpty()) {
+                startTunnelAction(SshTunnelService.ACTION_CONNECT, profileId);
+            } else if (!profileId.isEmpty()) {
+                Toast.makeText(this, "Разрешение на VPN не предоставлено", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode != REQUEST_KEY || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         try (InputStream input = getContentResolver().openInputStream(uri);
