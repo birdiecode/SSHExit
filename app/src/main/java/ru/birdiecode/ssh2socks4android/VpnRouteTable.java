@@ -128,6 +128,10 @@ public final class VpnRouteTable {
         throw new IllegalArgumentException("Unsupported IP version: " + version);
     }
 
+    public static String normalizePrefix(String value) {
+        return parse("validation", 0, value).prefix;
+    }
+
     private static Entry parse(String connectionId, int priority, String value) {
         if (value == null) throw new IllegalArgumentException("Route prefix is required");
         String input = value.trim();
