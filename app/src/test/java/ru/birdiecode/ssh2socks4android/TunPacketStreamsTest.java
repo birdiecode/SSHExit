@@ -30,11 +30,13 @@ public final class TunPacketStreamsTest {
         while ((count = framed.read(buffer)) != -1) bytes.write(buffer, 0, count);
 
         DataInputStream decoded = new DataInputStream(new ByteArrayInputStream(bytes.toByteArray()));
-        assertEquals(first.length, decoded.readInt());
+        assertEquals(first.length + 4, decoded.readInt());
+        assertEquals(2, decoded.readInt());
         byte[] firstActual = new byte[first.length];
         decoded.readFully(firstActual);
         assertArrayEquals(first, firstActual);
-        assertEquals(second.length, decoded.readInt());
+        assertEquals(second.length + 4, decoded.readInt());
+        assertEquals(24, decoded.readInt());
         byte[] secondActual = new byte[second.length];
         decoded.readFully(secondActual);
         assertArrayEquals(second, secondActual);
@@ -84,7 +86,7 @@ public final class TunPacketStreamsTest {
     @Test
     public void rejectsFramesLargerThanConfiguredMtu() throws Exception {
         ByteArrayOutputStream frames = new ByteArrayOutputStream();
-        frames.write(new byte[] {0, 0, 5, (byte) 0xdc}); // 1500
+        frames.write(new byte[] {0, 0, 5, (byte) 0xdc, 0, 0, 0, 2}); // 1500
         try {
             TunPacketStreams.copyOpenSshFramesToTun(
                     new ByteArrayInputStream(frames.toByteArray()), new ByteArrayOutputStream(), 1200);
@@ -96,7 +98,7 @@ public final class TunPacketStreamsTest {
 
     @Test
     public void rejectsTruncatedPacketFrame() throws Exception {
-        byte[] truncated = new byte[] {0, 0, 0, 4, 0x45, 1};
+        byte[] truncated = new byte[] {0, 0, 0, 8, 0, 0, 0, 2, 0x45, 1};
         try {
             TunPacketStreams.copyOpenSshFramesToTun(
                     new ByteArrayInputStream(truncated), new ByteArrayOutputStream(), MTU);
@@ -106,12 +108,29 @@ public final class TunPacketStreamsTest {
         }
     }
 
+    @Test public void matchesOpenSshProtocolWireVectors() throws Exception {
+        byte[] ipv4 = {0x45, 0, 0, 4};
+        InputStream framed = TunPacketStreams.addOpenSshFraming(new PacketInputStream(ipv4), MTU);
+        byte[] actual = new byte[12];
+        new DataInputStream(framed).readFully(actual);
+        assertArrayEquals(new byte[] {0,0,0,8, 0,0,0,2, 0x45,0,0,4}, actual);
+    }
+
+    @Test public void rejectsFamilyMismatch() throws Exception {
+        java.io.OutputStream decoder = TunPacketStreams.removeOpenSshFraming(new ByteArrayOutputStream(), MTU);
+        try {
+            decoder.write(new byte[]{0,0,0,8, 0,0,0,24, 0x45,0,0,4});
+            fail("Accepted IPv4 in IPv6 frame");
+        } catch (IOException expected) { }
+    }
+
     private static void writeFrame(ByteArrayOutputStream out, byte[] packet) throws IOException {
-        int length = packet.length;
+        int length = packet.length + 4;
         out.write((length >>> 24) & 0xff);
         out.write((length >>> 16) & 0xff);
         out.write((length >>> 8) & 0xff);
         out.write(length & 0xff);
+        out.write(new byte[] {0, 0, 0, (byte) ((packet[0] >>> 4 & 15) == 4 ? 2 : 24)});
         out.write(packet);
     }
 
