@@ -4,17 +4,34 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Service;
 import android.content.Intent;
+import android.net.VpnService;
+import android.os.ParcelFileDescriptor;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.util.Base64;
 
 import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.ChannelExec;
+import com.jcraft.jsch.OpenSshTunChannel;
+import com.jcraft.jsch.SocketFactory;
 import com.jcraft.jsch.Session;
 
 import java.security.MessageDigest;
+import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.UnknownHostException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Locale;
+import java.util.Random;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -26,7 +43,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public final class SshTunnelService extends Service {
+public final class SshTunnelService extends VpnService {
     static final String ACTION_CONNECT = "ru.birdiecode.ssh2socks4android.CONNECT";
     static final String ACTION_TRUST = "ru.birdiecode.ssh2socks4android.TRUST";
     static final String ACTION_STOP = "ru.birdiecode.ssh2socks4android.STOP";
