@@ -13,6 +13,23 @@ def releaseSigningConfigured = [
         releaseKeyPassword
 ].every { value -> value != null && !value.trim().isEmpty() }
 
+def debugCommitHash = System.getenv("GITHUB_SHA")
+if (debugCommitHash == null || debugCommitHash.trim().isEmpty()) {
+    try {
+        def process = ["git", "rev-parse", "--short=7", "HEAD"].execute(null, rootProject.projectDir)
+        process.waitFor()
+        if (process.exitValue() == 0) {
+            debugCommitHash = process.in.text.trim()
+        }
+    } catch (Exception ignored) {
+        // Builds from source archives may not have Git metadata.
+    }
+}
+if (debugCommitHash == null || debugCommitHash.trim().isEmpty()) {
+    debugCommitHash = "unknown"
+}
+debugCommitHash = debugCommitHash.take(7)
+
 android {
     namespace 'ru.birdiecode.ssh2socks4android'
     compileSdk 36
@@ -38,6 +55,8 @@ android {
 
     buildTypes {
         debug {
+            versionNameSuffix "-debug-${debugCommitHash}"
+
             // Trusted CI builds can sign debug APKs with the same key as releases.
             // Without signing secrets (for example, pull request builds), Android uses
             // its standard debug key.
