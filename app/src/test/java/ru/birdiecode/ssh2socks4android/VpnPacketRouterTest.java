@@ -47,8 +47,9 @@ public final class VpnPacketRouterTest {
     private static byte[] decodeSingleFrame(byte[] framed) {
         int length = ((framed[0] & 0xff) << 24) | ((framed[1] & 0xff) << 16)
                 | ((framed[2] & 0xff) << 8) | (framed[3] & 0xff);
-        byte[] packet = new byte[length];
-        System.arraycopy(framed, 4, packet, 0, length);
+        org.junit.Assert.assertEquals(2, framed[7]);
+        byte[] packet = new byte[length - 4];
+        System.arraycopy(framed, 8, packet, 0, length - 4);
         return packet;
     }
 
