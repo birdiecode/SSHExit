@@ -158,6 +158,7 @@ final class SshConnection {
 
 
     void trustAndConnect(String targetId) {
+        if (!"NEEDS_TRUST".equals(state)) return;
         String pending = ProfileStore.statusDetail(context, activeProfileId);
         if (pending == null || !pending.startsWith("NODE:")) {
             fail(targetId, "No pending host key confirmation");
