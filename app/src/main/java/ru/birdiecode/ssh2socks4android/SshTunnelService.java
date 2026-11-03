@@ -385,6 +385,7 @@ public final class SshTunnelService extends VpnService {
                 .append("command -v ip >/dev/null 2>&1 || { echo 'missing ip command'; exit 20; }\\n")
                 .append("command -v nft >/dev/null 2>&1 || { echo 'missing nft command'; exit 21; }\\n")
                 .append("ip link show dev \\"$IF\\" >/dev/null 2>&1 || { echo 'sshd did not create requested TUN interface'; exit 22; }\\n");
+        script.append("nft delete table inet \\"$TABLE\\" >/dev/null 2>&1 || true\\n");
         if (profile.vpnIpv4) {
             if (wan.isEmpty()) {
                 script.append("WAN=$(ip -o route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i==\\"dev\\"){print $(i+1); exit}}')\\n")
@@ -566,6 +567,7 @@ public final class SshTunnelService extends VpnService {
         Socks5Proxy proxy = activeProxy;
         activeProxy = null;
         if (proxy != null) proxy.stop();
+        closeVpnResources();
         activeSession = null;
         synchronized (activeSessions) {
             for (int i = activeSessions.size() - 1; i >= 0; i--) {
