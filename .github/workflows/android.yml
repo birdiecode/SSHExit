@@ -47,6 +47,9 @@ jobs:
           chmod 600 "$RUNNER_TEMP/ssh2socks-release.p12"
           test -s "$RUNNER_TEMP/ssh2socks-release.p12"
 
+      - name: Run unit tests
+        run: gradle --no-daemon testDebugUnitTest
+
       - name: Assemble debug APK for pull requests
         if: github.event_name == 'pull_request'
         run: gradle --no-daemon assembleDebug
