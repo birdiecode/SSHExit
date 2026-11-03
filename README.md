@@ -17,7 +17,7 @@ The app opens a local SOCKS5 listener on 127.0.0.1 only. Configure a SOCKS5-awar
 
 ## Android identity
 
-The application is named **SSHExit**, with application ID `ru.birdiecode.sshexit`.
+The application is named **SSHExit**, with application ID `host.birdiecode.sshexit`.
 Android installs it separately from the earlier `ru.birdiecode.ssh2socks4android` app.
 Saved profiles, passwords and private keys in the old installation are not transferred automatically.
 
