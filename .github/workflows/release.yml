@@ -9,6 +9,7 @@ on:
         type: string
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -38,7 +39,7 @@ jobs:
           import sys
 
           version = os.environ["APP_VERSION"]
-          if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", version):
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
               print("Version must use X.Y.Z format, for example 1.2.3", file=sys.stderr)
               sys.exit(1)
           PY
@@ -72,8 +73,8 @@ jobs:
 
           path = Path("app/build.gradle")
           source = path.read_text()
-          code_pattern = re.compile(r"(?m)^(\\s*versionCode\\s+)(\\d+)(\\s*)$")
-          name_pattern = re.compile(r'(?m)^(\\s*versionName\\s+")[^"]*("\\s*)$')
+          code_pattern = re.compile(r"(?m)^(\s*versionCode\s+)(\d+)(\s*)$")
+          name_pattern = re.compile(r'(?m)^(\s*versionName\s+")[^"]*("\s*)$')
 
           code_matches = list(code_pattern.finditer(source))
           name_matches = list(name_pattern.finditer(source))
@@ -108,6 +109,9 @@ jobs:
           git commit -m "chore(release): set version ${APP_VERSION}"
           git tag -a "v${APP_VERSION}" -m "SSH2SOCKS v${APP_VERSION}"
           git push --atomic origin HEAD:main "refs/tags/v${APP_VERSION}"
+
+      - name: Trigger standard CI for the version commit
+        run: gh workflow run android.yml --ref main
 
       - name: Create GitHub Release
         run: |
