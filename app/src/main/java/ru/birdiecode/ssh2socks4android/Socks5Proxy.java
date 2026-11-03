@@ -47,6 +47,13 @@ final class Socks5Proxy {
         acceptor.start();
     }
 
+    boolean isRunning() {
+        ServerSocket listener = server;
+        Thread acceptor = acceptThread;
+        return listener != null && listener.isBound() && !listener.isClosed()
+                && acceptor != null && acceptor.isAlive();
+    }
+
     void stop() {
         ServerSocket listener = server;
         server = null;
