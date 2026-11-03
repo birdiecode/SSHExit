@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Typeface;
 import android.content.res.Configuration;
 import android.content.res.ColorStateList;
@@ -14,6 +15,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -27,6 +29,10 @@ import android.widget.FrameLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.button.MaterialButton;
@@ -78,6 +84,11 @@ public final class MainActivity extends Activity {
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(20), dp(12), dp(20), 0);
+        ViewCompat.setOnApplyWindowInsetsListener(page, (view, windowInsets) -> {
+            Insets systemBars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+            view.setPadding(dp(20), dp(12) + systemBars.top, dp(20), systemBars.bottom);
+            return windowInsets;
+        });
         page.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorSurface, 0xFFF7F8FC));
 
         TextView title = text("SSH2SOCKS", 23, 0xFF152033, true);
@@ -278,28 +289,28 @@ public final class MainActivity extends Activity {
             rowFingerprints.put(profile.id, fingerprint);
             updateFingerprintStatus(fingerprint, profile);
 
-            LinearLayout buttons = new LinearLayout(this);
-            buttons.setOrientation(LinearLayout.HORIZONTAL);
-            LinearLayout.LayoutParams buttonsParams = params(-1, -2);
-            buttonsParams.topMargin = dp(10);
-            content.addView(buttons, buttonsParams);
-
             MaterialButton action = makeButton("Подключить", true);
             action.setOnClickListener(v -> toggle(profile));
-            buttons.addView(action, new LinearLayout.LayoutParams(0, dp(46), 1.25f));
+            LinearLayout.LayoutParams actionParams = params(-1, dp(46));
+            actionParams.topMargin = dp(12);
+            content.addView(action, actionParams);
             rowActions.put(profile.id, action);
+
+            LinearLayout secondaryActions = new LinearLayout(this);
+            secondaryActions.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams secondaryParams = params(-1, -2);
+            secondaryParams.topMargin = dp(6);
+            content.addView(secondaryActions, secondaryParams);
 
             MaterialButton edit = makeButton("Изменить", false);
             edit.setOnClickListener(v -> showEditor(profile));
-            LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
-            editParams.leftMargin = dp(6);
-            buttons.addView(edit, editParams);
+            secondaryActions.addView(edit, new LinearLayout.LayoutParams(0, dp(46), 1f));
 
             MaterialButton delete = makeButton("Удалить", false);
             delete.setOnClickListener(v -> confirmDelete(profile));
             LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
-            deleteParams.leftMargin = dp(6);
-            buttons.addView(delete, deleteParams);
+            deleteParams.leftMargin = dp(8);
+            secondaryActions.addView(delete, deleteParams);
 
             MaterialButton resetFingerprint = makeButton("Сбросить fingerprint", false);
             resetFingerprint.setOnClickListener(v -> confirmFingerprintReset(profile));
@@ -779,20 +790,41 @@ public final class MainActivity extends Activity {
         keyList.removeAllViews();
         List<SshKey> keys = SshKeyStore.all(this);
         if (keys.isEmpty()) {
-            TextView empty = text("Нет импортированных ключей. Можно подключаться по паролю.", 14, 0xFF65728A, false);
-            empty.setPadding(dp(8), dp(24), dp(8), dp(24));
-            keyList.addView(empty);
+            MaterialCardView emptyCard = surfaceCard();
+            TextView empty = text("Нет импортированных ключей. Можно подключаться по паролю.",
+                    14, 0xFF65728A, false);
+            empty.setPadding(dp(16), dp(20), dp(16), dp(20));
+            emptyCard.addView(empty);
+            keyList.addView(emptyCard, params(-1, -2));
             return;
         }
         for (SshKey key : keys) {
+            MaterialCardView card = surfaceCard();
+            card.setCardElevation(0);
+            card.setContentPadding(dp(14), dp(12), dp(14), dp(12));
+            LinearLayout.LayoutParams cardParams = params(-1, -2);
+            cardParams.bottomMargin = dp(10);
+            keyList.addView(card, cardParams);
+
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
-            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            card.addView(row);
             TextView label = text(key.name, 16, 0xFF152033, true);
+            label.setMaxLines(2);
+            label.setEllipsize(android.text.TextUtils.TruncateAt.END);
             row.addView(label);
+            TextView description = text("Приватный ключ · общее хранилище", 12, 0xFF65728A, false);
+            LinearLayout.LayoutParams descriptionParams = params(-1, -2);
+            descriptionParams.topMargin = dp(3);
+            row.addView(description, descriptionParams);
+
             LinearLayout actions = new LinearLayout(this);
             actions.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams actionsParams = params(-1, -2);
+            actionsParams.topMargin = dp(8);
+            row.addView(actions, actionsParams);
             MaterialButton rename = makeButton("Переименовать", false);
+            rename.setTextSize(13);
             rename.setOnClickListener(v -> {
                 SshKey current = SshKeyStore.get(this, key.id);
                 if (current == null) return;
@@ -808,6 +840,7 @@ public final class MainActivity extends Activity {
                             }
                         }).show();
             });
+            actions.addView(rename, new LinearLayout.LayoutParams(0, dp(44), 1f));
             MaterialButton delete = makeButton("Удалить", false);
             delete.setOnClickListener(v -> new AlertDialog.Builder(this)
                     .setTitle("Удалить ключ?")
@@ -817,13 +850,9 @@ public final class MainActivity extends Activity {
                         SshKeyStore.delete(this, key.id);
                         renderKeyList();
                     }).show());
-            actions.addView(rename, new LinearLayout.LayoutParams(0, -2, 1f));
-            actions.addView(delete, new LinearLayout.LayoutParams(0, -2, 1f));
-            row.addView(actions);
-            keyList.addView(row);
-            View divider = new View(this);
-            divider.setBackgroundColor(resolveColor(com.google.android.material.R.attr.colorOutlineVariant, 0xFFE0E3E8));
-            keyList.addView(divider, params(-1, dp(1)));
+            LinearLayout.LayoutParams deleteParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
+            deleteParams.leftMargin = dp(8);
+            actions.addView(delete, deleteParams);
         }
     }
 
@@ -902,8 +931,17 @@ public final class MainActivity extends Activity {
             int count;
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
             pendingVaultKey = output.toByteArray();
-            String filename = uri.getLastPathSegment();
-            pendingVaultKeyName = filename == null || filename.trim().isEmpty() ? "SSH-ключ" : filename;
+            String filename = null;
+            try (Cursor cursor = getContentResolver().query(uri,
+                    new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) filename = cursor.getString(0);
+            }
+            if (filename == null || filename.trim().isEmpty()) filename = uri.getLastPathSegment();
+            if (filename != null) {
+                int slash = Math.max(filename.lastIndexOf('/'), filename.lastIndexOf(':'));
+                if (slash >= 0 && slash + 1 < filename.length()) filename = filename.substring(slash + 1);
+            }
+            pendingVaultKeyName = filename == null || filename.trim().isEmpty() ? "SSH-ключ" : filename.trim();
             showSaveKeyDialog();
         } catch (Exception e) {
             Toast.makeText(this, "Не удалось прочитать ключ: " + e.getMessage(), Toast.LENGTH_LONG).show();
