@@ -396,15 +396,16 @@ public final class SshTunnelService extends VpnService {
         if (monitor != null) {
             try { monitor.disconnect(); } catch (Exception ignored) {}
         }
-        OpenSshTunChannel tun = activeTun;
-        activeTun = null;
-        if (tun != null) {
-            try { tun.disconnect(); } catch (Exception ignored) {}
-        }
+        // Closing the descriptor first unblocks the channel's TUN read before disconnect joins it.
         ParcelFileDescriptor descriptor = vpnInterface;
         vpnInterface = null;
         if (descriptor != null) {
             try { descriptor.close(); } catch (Exception ignored) {}
+        }
+        OpenSshTunChannel tun = activeTun;
+        activeTun = null;
+        if (tun != null) {
+            try { tun.disconnect(); } catch (Exception ignored) {}
         }
         activeTunUnit = -1;
         activeVpnTable = "";
