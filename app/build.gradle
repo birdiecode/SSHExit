@@ -2,6 +2,17 @@ plugins {
     id 'com.android.application'
 }
 
+def releaseStoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
+def releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+def releaseSigningConfigured = [
+        releaseStoreFile,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword
+].every { value -> value != null && !value.trim().isEmpty() }
+
 android {
     namespace 'ru.birdiecode.ssh2socks4android'
     compileSdk 36
@@ -12,6 +23,26 @@ android {
         targetSdk 35
         versionCode 1
         versionName '1.0'
+    }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            release {
+                storeFile rootProject.file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+        }
     }
 
     compileOptions {

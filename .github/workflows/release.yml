@@ -64,6 +64,18 @@ jobs:
         with:
           gradle-version: "8.13"
 
+      - name: Restore signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Set the ANDROID_KEYSTORE_BASE64 repository secret before running a release."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ssh2socks-release.p12"
+          chmod 600 "$RUNNER_TEMP/ssh2socks-release.p12"
+          test -s "$RUNNER_TEMP/ssh2socks-release.p12"
+
       - name: Set application version
         run: |
           python3 - <<'PY'
@@ -95,11 +107,23 @@ jobs:
           path.write_text(source)
           PY
 
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Build signed release APK
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/ssh2socks-release.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "Missing ANDROID_KEYSTORE_PASSWORD secret."; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS secret."; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret."; exit 1; }
+          gradle --no-daemon assembleRelease
 
-      - name: Prepare release APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk "ssh2socks-${APP_VERSION}-debug.apk"
+      - name: Verify and prepare signed APK
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
+          cp "$APK" "ssh2socks-${APP_VERSION}.apk"
 
       - name: Commit version and push tag
         run: |
@@ -115,6 +139,6 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          gh release create "v${APP_VERSION}" "ssh2socks-${APP_VERSION}-debug.apk" \
+          gh release create "v${APP_VERSION}" "ssh2socks-${APP_VERSION}.apk" \
             --title "SSH2SOCKS v${APP_VERSION}" \
-            --notes "Debug APK for SSH2SOCKS v${APP_VERSION}."
+            --notes "Signed Android APK for SSH2SOCKS v${APP_VERSION}."
