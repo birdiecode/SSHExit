@@ -25,6 +25,7 @@ final class Profile {
     boolean vpnFailover = false;
     boolean vpnAutoReconnect = true;
     String vpnExternalInterface = "";
+    boolean serverSkipConfirmation = false;
     boolean serverManageIpv4Forwarding = true;
     boolean serverManageIpv6Forwarding = true;
     boolean serverNatIpv4 = true;
