@@ -46,6 +46,90 @@ public final class TunPacketStreams {
         }
     }
 
+    /**
+     * Reassembles potentially fragmented SSH channel-data writes and emits each
+     * complete framed packet as one write to the Android TUN descriptor.
+     */
+    public static OutputStream removeOpenSshFraming(OutputStream tunOutput, int mtu) {
+        if (tunOutput == null) throw new IllegalArgumentException("TUN output is required");
+        validateMtu(mtu);
+        return new FramedPacketOutputStream(tunOutput, mtu);
+    }
+
+    private static final class FramedPacketOutputStream extends OutputStream {
+        private final OutputStream tunOutput;
+        private final int mtu;
+        private final byte[] header = new byte[4];
+        private final byte[] packet;
+        private int headerOffset;
+        private int packetLength = -1;
+        private int packetOffset;
+        private boolean closed;
+
+        FramedPacketOutputStream(OutputStream tunOutput, int mtu) {
+            this.tunOutput = tunOutput;
+            this.mtu = mtu;
+            this.packet = new byte[mtu];
+        }
+
+        @Override
+        public synchronized void write(int value) throws IOException {
+            byte[] one = new byte[] {(byte) value};
+            write(one, 0, 1);
+        }
+
+        @Override
+        public synchronized void write(byte[] bytes, int offset, int length) throws IOException {
+            if (closed) throw new IOException("Stream is closed");
+            if (bytes == null) throw new NullPointerException("bytes");
+            if (offset < 0 || length < 0 || length > bytes.length - offset) {
+                throw new IndexOutOfBoundsException();
+            }
+            int end = offset + length;
+            while (offset < end) {
+                if (packetLength < 0) {
+                    int count = Math.min(4 - headerOffset, end - offset);
+                    System.arraycopy(bytes, offset, header, headerOffset, count);
+                    offset += count;
+                    headerOffset += count;
+                    if (headerOffset == 4) {
+                        packetLength = ((header[0] & 0xff) << 24) | ((header[1] & 0xff) << 16)
+                                | ((header[2] & 0xff) << 8) | (header[3] & 0xff);
+                        if (packetLength <= 0 || packetLength > mtu) {
+                            throw new IOException("Invalid SSH TUN packet length: " + packetLength);
+                        }
+                        packetOffset = 0;
+                    }
+                } else {
+                    int count = Math.min(packetLength - packetOffset, end - offset);
+                    System.arraycopy(bytes, offset, packet, packetOffset, count);
+                    offset += count;
+                    packetOffset += count;
+                    if (packetOffset == packetLength) {
+                        tunOutput.write(packet, 0, packetLength);
+                        tunOutput.flush();
+                        packetLength = -1;
+                        packetOffset = 0;
+                        headerOffset = 0;
+                    }
+                }
+            }
+        }
+
+        @Override
+        public synchronized void close() throws IOException {
+            if (closed) return;
+            closed = true;
+            try {
+                if (headerOffset != 0 || packetLength >= 0) {
+                    throw new IOException("SSH TUN channel closed in the middle of a packet");
+                }
+            } finally {
+                tunOutput.close();
+            }
+        }
+    }
+
     private static void validateMtu(int mtu) {
         if (mtu < 576 || mtu > 65535) throw new IllegalArgumentException("MTU must be between 576 and 65535");
     }
