@@ -118,6 +118,15 @@ final class SshConnection {
         if (failure.isEmpty() && activeTun != null && activeTun.isClosed()) failure = "Закрыт канал SSH TUN: " + activeTun.getFailureReason();
         else if (failure.isEmpty() && serverConfigChannel != null && serverConfigChannel.isClosed())
             failure = "Завершился серверный процесс настройки TUN, exit=" + serverConfigChannel.getExitStatus();
+        OutputStream control = serverConfigControl;
+        if (failure.isEmpty() && control != null
+                && System.nanoTime() - lastServerHeartbeatNanos >= 15_000_000_000L) {
+            try {
+                synchronized (control) { control.write("alive\n".getBytes(StandardCharsets.UTF_8)); control.flush(); }
+                lastServerHeartbeatNanos = System.nanoTime();
+                AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Подтверждена активность серверных ресурсов");
+            } catch (IOException error) { failure = "Не удалось продлить серверную аренду"; }
+        }
         boolean lost = !failure.isEmpty();
         if (lost && System.currentTimeMillis() - connectedAt >= 60000) retryAttempt = 0;
         if (lost) {
@@ -197,8 +206,7 @@ final class SshConnection {
     private volatile Thread vpnPacketThread;
     private static final int VPN_NOTIFICATION_ID = 42;
     private static final int DEFAULT_VPN_MTU = 1400;
-    private static final String VPN_IPV4_SERVER = "10.253.0.1";
-    private static final String VPN_IPV4_CLIENT = "10.253.0.2";
+    private long lastServerHeartbeatNanos;
 
 
     void trustAndConnect(String targetId) {
@@ -250,7 +258,10 @@ final class SshConnection {
         boolean socksMode = !"VPN".equals(target.connectionMode);
         Session previous = null;
         try {
-            if (vpnMode) establishVpnInterface(target);
+            if (vpnMode) {
+                activeTunUnit = TunAddressPlan.FIRST_UNIT + new java.security.SecureRandom().nextInt(TunAddressPlan.UNIT_COUNT);
+                establishVpnInterface(target);
+            }
             for (Profile node : chain) {
                 AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SSH-узел " + (chain.indexOf(node) + 1) + "/" + chain.size());
                 JSch jsch = new JSch();
@@ -378,7 +389,6 @@ final class SshConnection {
     }
 
     private void requestServerPlan(Profile target, Session endpoint) throws Exception {
-        activeTunUnit = 100000000 + new Random().nextInt(100000000);
         activeVpnTable = "ssh2socks_" + shortProfileToken(java.util.UUID.randomUUID().toString());
         String wan = target.vpnExternalInterface.trim();
         if (target.vpnIpv4 && wan.isEmpty()) {
@@ -416,6 +426,8 @@ final class SshConnection {
         request.put("interface", "tun" + activeTunUnit);
         request.put("table", activeVpnTable);
         request.put("wan", wan);
+        String[] ipv4 = TunAddressPlan.ipv4(activeTunUnit);
+        request.put("ipv4Server", ipv4[0]); request.put("ipv4Client", ipv4[1]);
         request.put("ipv6Server", ipv6[0]); request.put("ipv6Client", ipv6[1]);
         setStatus(activeProfileId, "NEEDS_SERVER_CONFIG", request.toString());
         AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Ожидание подтверждения серверного плана; команды настройки ещё не выполнялись");
@@ -469,7 +481,9 @@ final class SshConnection {
                     AppLog.INSTANCE.record(AppLog.INFO, connectionId, "ПРИМЕНЕНО: " + item);
         } else if ("SSHEXIT_CLEANUP_DONE".equals(line)) {
             run.cleanupConfirmed = true;
-            AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Сервер подтвердил удаление правил и адресов и восстановление изменённого forwarding");
+            AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Сервер подтвердил удаление правил, маршрутов и адресов этого клиента; forwarding сохранён для других клиентов");
+        } else if ("SSHEXIT_LEASE_EXPIRED".equals(line)) {
+            AppLog.INSTANCE.record(AppLog.WARN, connectionId, "Серверная аренда истекла: начата очистка ресурсов этого клиента");
         } else if ("SSHEXIT_CLEANUP_FAILED".equals(line)) {
             AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Сервер сообщил об ошибке очистки ресурсов");
         }
@@ -485,7 +499,7 @@ final class SshConnection {
                 .addDisallowedApplication(service.getPackageName());
 
         if (profile.vpnIpv4) {
-            builder.addAddress(VPN_IPV4_CLIENT, 32);
+            builder.addAddress(TunAddressPlan.ipv4(activeTunUnit)[1], 32);
             if (profile.vpnFullTunnel) builder.addRoute("0.0.0.0", 0);
         }
         String[] ipv6 = vpnIpv6Addresses(profile);
@@ -522,19 +536,7 @@ final class SshConnection {
     }
 
     private String[] vpnIpv6Addresses(Profile profile) throws Exception {
-        if (!profile.vpnIpv6Prefix.isEmpty()) {
-            String canonical = VpnRouteTable.normalizePrefix(profile.vpnIpv6Prefix);
-            if (!canonical.contains(":")) throw new IllegalArgumentException("Префикс VPN должен быть IPv6");
-            int prefix = Integer.parseInt(canonical.substring(canonical.lastIndexOf('/') + 1));
-            if (prefix > 64) throw new IllegalArgumentException("IPv6-префикс должен быть /64 или шире");
-            byte[] network = java.net.InetAddress.getByName(canonical.substring(0, canonical.lastIndexOf('/'))).getAddress();
-            network[15] = 1;
-            String server = java.net.InetAddress.getByAddress(network).getHostAddress();
-            network[15] = 2;
-            String client = java.net.InetAddress.getByAddress(network).getHostAddress();
-            return new String[]{server, client};
-        }
-        return new String[]{"fd53:5353:5353::1", "fd53:5353:5353::2"};
+        return TunAddressPlan.ipv6(activeTunUnit, profile.vpnIpv6Prefix);
     }
 
     private SocketFactory protectedSocketFactory() {
@@ -582,6 +584,7 @@ final class SshConnection {
         InputStream stdout = monitor.getInputStream();
         serverConfigControl = monitor.getOutputStream();
         serverConfigChannel = monitor;
+        lastServerHeartbeatNanos = System.nanoTime();
         monitor.connect(20_000);
         StringBuilder response = new StringBuilder();
         long deadline = System.currentTimeMillis() + 20_000;
@@ -653,7 +656,7 @@ final class SshConnection {
             try {
                 OutputStream control = serverConfigControl;
                 serverConfigControl = null;
-                if (control != null) { control.write("stop\n".getBytes(StandardCharsets.UTF_8)); control.flush(); }
+                if (control != null) { synchronized (control) { control.write("stop\n".getBytes(StandardCharsets.UTF_8)); control.flush(); } }
                 Thread reader = serverOutputThread;
                 if (reader != null && reader != Thread.currentThread()) reader.join(2000);
             } catch (Exception ignored) { }
