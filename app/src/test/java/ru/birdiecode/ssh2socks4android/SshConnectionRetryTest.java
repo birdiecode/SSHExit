@@ -45,8 +45,10 @@ public class SshConnectionRetryTest {
         ConnectionStateMachine machine = (ConnectionStateMachine) field("lifecycle");
         if (next != ConnectionStateMachine.State.CONNECTING)
             machine.transition(ConnectionStateMachine.State.AUTHENTICATING);
-        if (next == ConnectionStateMachine.State.NEEDS_SERVER_CONFIG)
+        if (next == ConnectionStateMachine.State.NEEDS_SERVER_CONFIG) {
+            machine.transition(ConnectionStateMachine.State.PREPARING_TUN);
             machine.transition(next);
+        }
         if (next == ConnectionStateMachine.State.PREPARING_TUN
                 || next == ConnectionStateMachine.State.CONFIGURING_SERVER) {
             machine.transition(ConnectionStateMachine.State.PREPARING_TUN);
