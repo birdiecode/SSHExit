@@ -96,7 +96,11 @@ public final class SshTunnelService extends VpnService {
         if (id.isEmpty()) { refreshNotification(); return START_NOT_STICKY; }
         SshConnection connection = connections.get(id);
         if (ACTION_CONNECT.equals(action)) {
-            if (connection == null || !connection.isLive()) {
+            if (connection != null && connection.hasRetainedVpn() && "ERROR".equals(connection.state)) {
+                SshConnection retained = connection;
+                String target = id;
+                retained.execute(() -> retained.connect(target));
+            } else if (connection == null || !connection.isLive()) {
                 if (connection != null) connection.shutdown();
                 connection = new SshConnection(this, connectionHost, id);
                 connections.put(id, connection);
@@ -139,15 +143,18 @@ public final class SshTunnelService extends VpnService {
     private void refreshNotification() {
         if (destroyed) return;
         int connected = 0, pending = 0;
+        boolean vpnBlocking = false;
         for (SshConnection c : connections.values()) {
             if (!c.isLive()) continue;
             if ("CONNECTED".equals(c.state)) connected++; else pending++;
+            if (c.hasRetainedVpn() && !"CONNECTED".equals(c.state)) vpnBlocking = true;
         }
         if (connected + pending == 0) {
             stopForeground(true);
             stopSelf();
         } else updateNotification("SSH tunnel connected",
-                "Подключено: " + connected + " · В процессе: " + pending);
+                "Подключено: " + connected + " · В процессе: " + pending
+                        + (vpnBlocking ? " · VPN блокирует трафик" : ""));
     }
 
     private void startInForeground(String title, String text) {
