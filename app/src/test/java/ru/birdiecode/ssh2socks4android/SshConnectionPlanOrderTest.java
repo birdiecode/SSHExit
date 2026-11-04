@@ -45,6 +45,7 @@ public class SshConnectionPlanOrderTest {
         AtomicBoolean opened = new AtomicBoolean();
         try (MockedStatic<ProfileStore> store = mockStatic(ProfileStore.class);
              MockedStatic<SshKeyStore> keys = mockStatic(SshKeyStore.class);
+             MockedStatic<android.text.TextUtils> text = mockStatic(android.text.TextUtils.class);
              MockedConstruction<JSch> clients = mockConstruction(JSch.class, (client, context) -> {
                  when(client.getSession(anyString(), anyString(), anyInt())).thenReturn(ssh);
              });
@@ -56,6 +57,7 @@ public class SshConnectionPlanOrderTest {
                      opened.set(true); return null;
                  }).when(tun).openOn(ssh, 20_000);
              })) {
+            text.when(() -> android.text.TextUtils.join(eq(" → "), any(Iterable.class))).thenReturn("SSH");
             store.when(() -> ProfileStore.get(any(Context.class), eq(profile.id))).thenReturn(profile);
             keys.when(() -> SshKeyStore.all(any(Context.class))).thenReturn(java.util.Collections.emptyList());
             store.when(() -> ProfileStore.setStatus(any(Context.class), eq(profile.id),
