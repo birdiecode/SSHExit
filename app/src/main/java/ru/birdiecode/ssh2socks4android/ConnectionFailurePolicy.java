@@ -70,6 +70,8 @@ final class ConnectionFailurePolicy {
             kind = reason < 0 || reason == 2 || reason == 4
                     ? Kind.TEMPORARY_NETWORK : Kind.CONFIGURATION;
         }
+        if (!sessionConnected && reason < 0 && kind == Kind.CONFIGURATION)
+            kind = Kind.TEMPORARY_NETWORK;
         return new Failure(kind, error.getMessage(), error);
     }
 
