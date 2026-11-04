@@ -6,6 +6,8 @@ import org.json.JSONObject;
 import org.junit.Test;
 import java.util.*;
 import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
+import android.content.Context;
 
 public class JsonStoreGuardTest {
     private JSONObject schema() throws Exception {
@@ -104,6 +106,103 @@ public class JsonStoreGuardTest {
         prefs.edit().putString("migrated", "bad").commit();
         rejected(() -> JsonStoreGuard.flag(prefs, "migrated", "Test store"));
         assertEquals("bad", prefs.getString("migrated", ""));
+    }
+
+    private Context context(Map<String,MemoryPrefs> stores) {
+        Context context = mock(Context.class);
+        when(context.getApplicationContext()).thenReturn(context);
+        when(context.getSharedPreferences(anyString(), anyInt())).thenAnswer(call ->
+                stores.computeIfAbsent(call.getArgument(0), key -> new MemoryPrefs()));
+        return context;
+    }
+    private String legacyProfile() throws Exception {
+        return new JSONArray().put(new JSONObject().put("id", "legacy")
+                .put("name", "Legacy").put("host", "server").put("username", "user")
+                .put("encryptedKey", "ciphertext").put("encryptedPassphrase", "phrase-cipher")).toString();
+    }
+    private Map<String,MemoryPrefs> legacyStores() throws Exception {
+        Map<String,MemoryPrefs> stores = new HashMap<>();
+        MemoryPrefs profiles = new MemoryPrefs();
+        profiles.edit().putString("profiles", legacyProfile()).putBoolean("graph_migrated_v1", true).commit();
+        stores.put("ssh_profiles", profiles); stores.put("ssh_key_vault", new MemoryPrefs());
+        return stores;
+    }
+
+    @Test public void bothProductionStoresRefuseSaveAndDeleteAfterCorruptRead() {
+        Map<String,MemoryPrefs> stores = new HashMap<>();
+        Context context = context(stores);
+        MemoryPrefs profiles = (MemoryPrefs) context.getSharedPreferences("ssh_profiles", 0);
+        MemoryPrefs keys = (MemoryPrefs) context.getSharedPreferences("ssh_key_vault", 0);
+        profiles.edit().putString("profiles", "broken profiles").commit();
+        keys.edit().putString("keys", "broken keys").putBoolean("legacy_profile_keys_migrated_v1", true).commit();
+        rejected(() -> ProfileStore.all(context));
+        rejected(() -> ProfileStore.save(context, new Profile()));
+        rejected(() -> ProfileStore.delete(context, "any"));
+        rejected(() -> SshKeyStore.all(context));
+        rejected(() -> SshKeyStore.save(context, new SshKey()));
+        rejected(() -> SshKeyStore.delete(context, "any"));
+        assertEquals("broken profiles", profiles.getString("profiles", ""));
+        assertEquals("broken keys", keys.getString("keys", ""));
+        assertFalse(profiles.contains("graph_migrated_v1"));
+    }
+
+    @Test public void keyMigrationWriteFailureNeverClearsLegacyProfile() throws Exception {
+        Map<String,MemoryPrefs> stores = legacyStores();
+        Context context = context(stores);
+        stores.get("ssh_key_vault").failCommits = true;
+        String before = stores.get("ssh_profiles").getString("profiles", "");
+        rejected(() -> SshKeyStore.all(context));
+        assertEquals(before, stores.get("ssh_profiles").getString("profiles", ""));
+        assertFalse(stores.get("ssh_key_vault").getBoolean("legacy_profile_keys_migrated_v1", false));
+        assertEquals("[]", stores.get("ssh_key_vault").getString("keys", "[]"));
+    }
+
+    @Test public void keyMigrationPersistsBeforeCleanupAndIsIdempotent() throws Exception {
+        Map<String,MemoryPrefs> stores = legacyStores();
+        Context context = context(stores);
+        assertEquals(1, SshKeyStore.all(context).size());
+        assertEquals("ciphertext", SshKeyStore.all(context).get(0).encryptedPrivateKey);
+        assertEquals("phrase-cipher", SshKeyStore.all(context).get(0).encryptedPassphrase);
+        assertEquals("", ProfileStore.get(context, "legacy").encryptedKey);
+        assertTrue(stores.get("ssh_key_vault").getBoolean("legacy_profile_keys_migrated_v1", false));
+        assertTrue(stores.get("ssh_profiles").getString("profiles.last_good", "").contains("ciphertext"));
+        assertEquals(1, SshKeyStore.all(context).size());
+    }
+
+    @Test public void interruptedCleanupKeepsBothCopiesAndRestartDoesNotDuplicateKey() throws Exception {
+        Map<String,MemoryPrefs> stores = legacyStores();
+        Context context = context(stores);
+        stores.get("ssh_profiles").failCommits = true;
+        rejected(() -> SshKeyStore.all(context));
+        assertEquals("ciphertext", ProfileStore.get(context, "legacy").encryptedKey);
+        JSONArray saved = new JSONArray(stores.get("ssh_key_vault").getString("keys", "[]"));
+        assertEquals(1, saved.length());
+        assertEquals("ciphertext", saved.getJSONObject(0).getString("encryptedPrivateKey"));
+        assertFalse(stores.get("ssh_key_vault").getBoolean("legacy_profile_keys_migrated_v1", false));
+        // New preferences instances simulate reloading the preserved data after process restart.
+        Map<String,MemoryPrefs> reloaded = new HashMap<>();
+        for (Map.Entry<String,MemoryPrefs> entry : stores.entrySet()) {
+            MemoryPrefs copy = new MemoryPrefs(); copy.values.putAll(entry.getValue().values);
+            reloaded.put(entry.getKey(), copy);
+        }
+        Context restarted = context(reloaded);
+        assertEquals(1, SshKeyStore.all(restarted).size());
+        assertEquals("", ProfileStore.get(restarted, "legacy").encryptedKey);
+        assertTrue(reloaded.get("ssh_key_vault").getBoolean("legacy_profile_keys_migrated_v1", false));
+    }
+
+    @Test public void jumpMigrationFailureDoesNotMarkCompletionOrChangeProfiles() throws Exception {
+        Map<String,MemoryPrefs> stores = new HashMap<>();
+        Context context = context(stores);
+        MemoryPrefs profiles = (MemoryPrefs) context.getSharedPreferences("ssh_profiles", 0);
+        String before = new JSONArray().put(new JSONObject().put("id", "target")
+                .put("host", "end").put("jumpHost", "bridge").put("jumpUsername", "user")
+                .put("encryptedJumpPassword", "password-cipher").put("jumpFingerprint", "SHA256:pin")).toString();
+        profiles.edit().putString("profiles", before).commit();
+        profiles.failCommits = true;
+        rejected(() -> ProfileStore.all(context));
+        assertEquals(before, profiles.getString("profiles", ""));
+        assertFalse(profiles.getBoolean("graph_migrated_v1", false));
     }
 
     private static final class MemoryPrefs implements SharedPreferences {
