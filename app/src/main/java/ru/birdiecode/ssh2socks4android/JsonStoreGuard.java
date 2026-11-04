@@ -62,7 +62,10 @@ final class JsonStoreGuard {
 
     static boolean flag(SharedPreferences prefs, String key, String label) {
         try { return prefs.getBoolean(key, false); }
-        catch (Exception error) { throw problem(label, "содержит некорректную отметку миграции. Запись заблокирована."); }
+        catch (Exception error) {
+            preserveCorrupt(prefs, key);
+            throw problem(label, "содержит некорректную отметку миграции. Запись заблокирована.");
+        }
     }
 
     static synchronized void write(SharedPreferences prefs, String key, JSONArray data,
