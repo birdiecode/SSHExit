@@ -401,10 +401,10 @@ public final class MainActivity extends Activity {
             emptyContent.setOrientation(LinearLayout.VERTICAL);
             emptyContent.setGravity(Gravity.CENTER);
             emptyContent.setPadding(dp(20), dp(28), dp(20), dp(28));
-            TextView emptyTitle = text("Пока нет хостов", 18, 0xFF152033, true);
+            TextView emptyTitle = text(storageErrors.containsKey("profiles") ? "Список хостов недоступен" : "Пока нет хостов", 18, 0xFF152033, true);
             emptyTitle.setGravity(Gravity.CENTER);
             emptyContent.addView(emptyTitle);
-            TextView empty = text("Добавьте SSH-сервер и выберите подключение напрямую или через ProxyJump.",
+            TextView empty = text(storageErrors.containsKey("profiles") ? "Данные не перезаписаны. Нажмите сообщение об ошибке выше для подробностей." : "Добавьте SSH-сервер и выберите подключение напрямую или через ProxyJump.",
                     14, 0xFF65728A, false);
             empty.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams emptyParams = params(-1, -2);
