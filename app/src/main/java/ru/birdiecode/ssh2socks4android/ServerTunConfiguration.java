@@ -62,6 +62,7 @@ final class ServerTunConfiguration {
         }
         if (profile.vpnIpv6) {
             script.append("[ -z \"$(ip -6 -o addr show to ").append(ipv6[0]).append("/128)\" ] || { echo SSHEXIT_ADDRESS_CONFLICT; exit 32; }\n");
+            script.append("[ -z \"$(ip -6 route show exact ").append(ipv6[1]).append("/128)\" ] || { echo SSHEXIT_ADDRESS_CONFLICT; exit 30; }\n");
             script.append(profile.serverManageIpv6Forwarding ? "CURRENT6=$(cat /proc/sys/net/ipv6/conf/all/forwarding)\n" : "[ \"$(cat /proc/sys/net/ipv6/conf/all/forwarding)\" = 1 ] || { echo 'IPv6 forwarding is disabled; automatic change was not approved'; exit 26; }\n")
                     .append(profile.serverManageIpv6Forwarding ? "if [ \"$CURRENT6\" != 1 ]; then printf '1\\n' > /proc/sys/net/ipv6/conf/all/forwarding; fi\necho SSHEXIT_APPLIED:forward6\n" : "")
                     .append("ip -6 route add ").append(ipv6[1]).append("/128 dev \"$IF\" proto static || { echo SSHEXIT_ADDRESS_CONFLICT; exit 30; }\nROUTE6=1\n")
