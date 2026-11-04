@@ -18,6 +18,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Test release version calculation
+        run: python3 -m unittest discover -s scripts -p test_release_version.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
