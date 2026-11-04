@@ -140,7 +140,7 @@ while True:
             echo = subprocess.Popen(['ip','netns','exec',PEER,'python3','-u','-c',echo_code], stdout=subprocess.PIPE,text=True)
             assert echo.stdout.readline().strip() == 'READY'
             for unit in [1000001,1000002,1000003]:
-                client=Client(classes,unit,lease_seconds=2 if unit==1000003 else 60)
+                client=Client(classes,unit,lease_seconds=10 if unit==1000003 else 60)
                 clients.append(client); client.ready()
             assert len({c.ip4 for c in clients}) == len({c.ip6 for c in clients}) == 3
             time.sleep(.2)
@@ -151,7 +151,7 @@ while True:
             assert Path('/proc/sys/net/ipv6/conf/all/forwarding').read_text().strip() == '1'
             clients[1].exchange(); clients[1].exchange(True)
             # Leave the third control pipe open but send no heartbeats: server lease expires.
-            clients[2].proc.wait(timeout=6)
+            clients[2].proc.wait(timeout=14)
             clients[2].reader.join(timeout=1)
             assert 'SSHEXIT_LEASE_EXPIRED' in clients[2].log
             assert 'SSHEXIT_CLEANUP_DONE' in clients[2].log
