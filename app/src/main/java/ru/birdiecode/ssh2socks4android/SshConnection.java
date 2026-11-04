@@ -124,7 +124,7 @@ final class SshConnection {
             try {
                 synchronized (control) { control.write("alive\n".getBytes(StandardCharsets.UTF_8)); control.flush(); }
                 lastServerHeartbeatNanos = System.nanoTime();
-                AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Подтверждена активность серверных ресурсов");
+                AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Отправлено подтверждение активности серверных ресурсов");
             } catch (IOException error) { failure = "Не удалось продлить серверную аренду"; }
         }
         boolean lost = !failure.isEmpty();
@@ -484,6 +484,10 @@ final class SshConnection {
             AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Сервер подтвердил удаление правил, маршрутов и адресов этого клиента; forwarding сохранён для других клиентов");
         } else if ("SSHEXIT_LEASE_EXPIRED".equals(line)) {
             AppLog.INSTANCE.record(AppLog.WARN, connectionId, "Серверная аренда истекла: начата очистка ресурсов этого клиента");
+        } else if (line.startsWith("SSHEXIT_CLEANUP_STEP_FAILED:")) {
+            String resource = line.substring("SSHEXIT_CLEANUP_STEP_FAILED:".length());
+            if (resource.matches("(route|address)[46]"))
+                AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Ошибка удаления ресурса клиента: " + resource);
         } else if ("SSHEXIT_CLEANUP_FAILED".equals(line)) {
             AppLog.INSTANCE.record(AppLog.ERROR, connectionId, "Сервер сообщил об ошибке очистки ресурсов");
         }
