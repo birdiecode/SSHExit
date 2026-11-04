@@ -76,6 +76,9 @@ public final class MainActivity extends Activity {
     private int logVerbosity = AppLog.INFO;
     private long renderedLogRevision = -1;
 
+    private TextView storageErrorView;
+    private final java.util.Map<String, String> storageErrors = new java.util.LinkedHashMap<>();
+
     private byte[] pendingVaultKey;
     private String pendingVaultKeyName = "";
     private String promptedFingerprint = "";
@@ -124,6 +127,15 @@ public final class MainActivity extends Activity {
         statusCardParams.topMargin = dp(14);
         page.addView(statusCard, statusCardParams);
         statusCard.addView(overallStatus);
+
+        storageErrorView = text("", 13, resolveColor(com.google.android.material.R.attr.colorError, 0xFFB42318), false);
+        storageErrorView.setMaxLines(6);
+        storageErrorView.setVisibility(View.GONE);
+        storageErrorView.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Ошибка хранилища")
+                .setMessage(android.text.TextUtils.join("\n\n", storageErrors.values()))
+                .setPositiveButton("Понятно", null).show());
+        page.addView(storageErrorView, params(-1, -2));
 
         contentHost = new FrameLayout(this);
         LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(-1, 0, 1f);
@@ -324,6 +336,53 @@ public final class MainActivity extends Activity {
         super.onPause();
     }
 
+    private void storageFailure(String store, JsonStoreGuard.StorageException error) {
+        storageErrors.put(store, error.getMessage());
+        updateStorageError();
+    }
+    private void updateStorageError() {
+        if (storageErrorView == null) return;
+        storageErrorView.setText(android.text.TextUtils.join("\n", storageErrors.values()));
+        storageErrorView.setVisibility(storageErrors.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+    private List<Profile> readProfilesForUi() {
+        try {
+            List<Profile> profiles = ProfileStore.all(this);
+            storageErrors.remove("profiles"); updateStorageError(); return profiles;
+        } catch (JsonStoreGuard.StorageException error) {
+            storageFailure("profiles", error); return java.util.Collections.emptyList();
+        }
+    }
+    private List<SshKey> readKeysForUi() {
+        try {
+            List<SshKey> keys = SshKeyStore.all(this);
+            storageErrors.remove("keys"); updateStorageError(); return keys;
+        } catch (JsonStoreGuard.StorageException error) {
+            storageFailure("keys", error); return java.util.Collections.emptyList();
+        }
+    }
+    private Profile profileForUi(String id) {
+        for (Profile profile : readProfilesForUi()) if (profile.id.equals(id)) return profile;
+        return null;
+    }
+    private SshKey keyForUi(String id) {
+        for (SshKey key : readKeysForUi()) if (key.id.equals(id)) return key;
+        return null;
+    }
+    private List<Profile> profileDependentsForUi(String id) {
+        List<Profile> result = new ArrayList<>();
+        for (Profile profile : readProfilesForUi()) if (id.equals(profile.jumpProfileId)) result.add(profile);
+        return result;
+    }
+    private boolean runStorageWrite(Runnable operation) {
+        try { operation.run(); return true; }
+        catch (JsonStoreGuard.StorageException error) {
+            storageFailure("write", error);
+            Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
+            return false;
+        }
+    }
+
     private void renderProfiles() {
         if (list == null) return;
         final int previousScrollY = hostsScroll == null ? 0 : hostsScroll.getScrollY();
@@ -335,7 +394,7 @@ public final class MainActivity extends Activity {
         rowErrorSummaries.clear();
         rowTechnicalDetails.clear();
 
-        List<Profile> profiles = ProfileStore.all(this);
+        List<Profile> profiles = readProfilesForUi();
         if (profiles.isEmpty()) {
             MaterialCardView emptyCard = surfaceCard();
             LinearLayout emptyContent = new LinearLayout(this);
@@ -397,7 +456,7 @@ public final class MainActivity extends Activity {
 
             TextView route = text("", 13, 0xFF65728A, false);
             Profile jump = profile.jumpProfileId == null || profile.jumpProfileId.isEmpty()
-                    ? null : ProfileStore.get(this, profile.jumpProfileId);
+                    ? null : profileForUi(profile.jumpProfileId);
             if (jump != null) {
                 route.setText("Маршрут через " + (jump.name.isEmpty() ? jump.host : jump.name));
                 LinearLayout.LayoutParams routeParams = params(-1, -2);
@@ -491,7 +550,7 @@ public final class MainActivity extends Activity {
         if (overallStatus == null) return;
         int connected = 0, pending = 0;
         String requestId = "", requestState = "", requestDetail = "";
-        for (Profile p : ProfileStore.all(this)) {
+        for (Profile p : readProfilesForUi()) {
             String state = ProfileStore.status(this, p.id);
             if ("CONNECTED".equals(state)) connected++;
             else if (!"IDLE".equals(state) && !"ERROR".equals(state)) pending++;
@@ -515,7 +574,7 @@ public final class MainActivity extends Activity {
             String status = ProfileStore.status(this, id);
             String detail = ProfileStore.statusDetail(this, id);
             TextView row = rowStatuses.get(id);
-            Profile rowProfile = ProfileStore.get(this, id);
+            Profile rowProfile = profileForUi(id);
             TextView fingerprint = rowFingerprints.get(id);
             if (rowProfile != null && fingerprint != null) updateFingerprintStatus(fingerprint, rowProfile);
             View errorPanel = rowErrorPanels.get(id);
@@ -623,13 +682,13 @@ public final class MainActivity extends Activity {
         if (connectionPromptOpen) return;
         if (fingerprint == null || fingerprint.isEmpty() || fingerprint.equals(promptedFingerprint)) return;
         promptedFingerprint = fingerprint;
-        Profile profile = ProfileStore.get(this, profileId);
+        Profile profile = profileForUi(profileId);
         if (profile == null) return;
         String[] trustParts = fingerprint.split(":", 3);
         Profile node = profile;
         String shownFingerprint = fingerprint;
         if (trustParts.length == 3 && "NODE".equals(trustParts[0])) {
-            Profile resolved = ProfileStore.get(this, trustParts[1]);
+            Profile resolved = profileForUi(trustParts[1]);
             if (resolved != null) node = resolved;
             shownFingerprint = trustParts[2];
         } else if ((fingerprint.startsWith("JUMP:") || fingerprint.startsWith("TARGET:"))
@@ -658,7 +717,7 @@ public final class MainActivity extends Activity {
         if (connectionPromptOpen) return;
         if (request == null || !request.startsWith("NODE:") || request.equals(promptedPasswordRequest)) return;
         String nodeId = request.substring("NODE:".length());
-        Profile node = ProfileStore.get(this, nodeId);
+        Profile node = profileForUi(nodeId);
         if (node == null) return;
         promptedPasswordRequest = request;
         EditText password = input("SSH-пароль для " + node.username + "@" + node.host, "",
@@ -697,7 +756,7 @@ public final class MainActivity extends Activity {
 
     private void askForServerPlan(String targetId, String encoded) {
         if (connectionPromptOpen) return;
-        Profile stored = ProfileStore.get(this, targetId);
+        Profile stored = profileForUi(targetId);
         if (stored == null) return;
         try {
             org.json.JSONObject request = new org.json.JSONObject(encoded);
@@ -845,7 +904,7 @@ public final class MainActivity extends Activity {
     }
 
     private void confirmDelete(Profile profile) {
-        List<Profile> dependents = ProfileStore.dependents(this, profile.id);
+        List<Profile> dependents = profileDependentsForUi(profile.id);
         StringBuilder message = new StringBuilder("Зашифрованные данные и профиль будут удалены.");
         if (!dependents.isEmpty()) {
             message.append("\n\nЭтот узел используется в маршрутах:");
@@ -862,7 +921,7 @@ public final class MainActivity extends Activity {
                     if (!"IDLE".equals(ProfileStore.status(this, profile.id))) {
                         startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     }
-                    ProfileStore.delete(this, profile.id);
+                    if (!runStorageWrite(() -> ProfileStore.delete(this, profile.id))) return;
                     renderProfiles();
                 })
                 .show();
@@ -898,12 +957,12 @@ public final class MainActivity extends Activity {
                 .setMessage("При следующем подключении нужно будет сверить fingerprint сервера и подтвердить его заново.")
                 .setNegativeButton("Отмена", null)
                 .setPositiveButton("Удалить", (dialog, which) -> {
-                    Profile stored = ProfileStore.get(this, profile.id);
+                    Profile stored = profileForUi(profile.id);
                     if (stored == null) return;
                     startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
                     stored.hostFingerprint = "";
                     stored.observedFingerprint = "";
-                    ProfileStore.save(this, stored);
+                    if (!runStorageWrite(() -> ProfileStore.save(this, stored))) return;
                     renderProfiles();
                 })
                 .show();
@@ -948,7 +1007,7 @@ public final class MainActivity extends Activity {
         ArrayList<Profile> options = new ArrayList<>();
         options.add(null);
         String selectedId = profile.jumpProfileId == null ? "" : profile.jumpProfileId;
-        List<Profile> saved = ProfileStore.all(this);
+        List<Profile> saved = readProfilesForUi();
         for (Profile candidate : saved) {
             if (candidate.id.equals(profile.id)) continue;
             if (selectedId.isEmpty() && profile.jumpHost != null
@@ -1148,7 +1207,7 @@ public final class MainActivity extends Activity {
         String current = jumpId;
         while (current != null && !current.isEmpty()) {
             if (current.equals(profileId) || !seen.add(current)) return true;
-            Profile node = ProfileStore.get(this, current);
+            Profile node = profileForUi(current);
             if (node == null) return false;
             current = node.jumpProfileId;
         }
@@ -1163,7 +1222,7 @@ public final class MainActivity extends Activity {
 
     private String keyLabel(Profile profile) {
         if (profile.keyId != null && !profile.keyId.isEmpty()) {
-            SshKey key = SshKeyStore.get(this, profile.keyId);
+            SshKey key = keyForUi(profile.keyId);
             if (key != null) return "Saved target key: " + key.name;
         }
         if (profile.encryptedKey != null && !profile.encryptedKey.isEmpty()) return "Legacy key attached to this profile";
@@ -1172,7 +1231,7 @@ public final class MainActivity extends Activity {
 
     private String jumpKeyLabel(Profile profile) {
         if (profile.jumpKeyId != null && !profile.jumpKeyId.isEmpty()) {
-            SshKey key = SshKeyStore.get(this, profile.jumpKeyId);
+            SshKey key = keyForUi(profile.jumpKeyId);
             if (key != null) return "Saved jump key: " + key.name;
         }
         return "No jump server key selected";
@@ -1183,7 +1242,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showKeyPicker(String selectedId, boolean allowNone, KeySelectionListener listener) {
-        List<SshKey> keys = SshKeyStore.all(this);
+        List<SshKey> keys = readKeysForUi();
         ArrayList<SshKey> options = new ArrayList<>();
         ArrayList<String> labels = new ArrayList<>();
         if (allowNone) {
@@ -1221,10 +1280,10 @@ public final class MainActivity extends Activity {
     private void renderKeyList() {
         if (keyList == null) return;
         keyList.removeAllViews();
-        List<SshKey> keys = SshKeyStore.all(this);
+        List<SshKey> keys = readKeysForUi();
         if (keys.isEmpty()) {
             MaterialCardView emptyCard = surfaceCard();
-            TextView empty = text("Нет импортированных ключей. Можно подключаться по паролю.",
+            TextView empty = text(storageErrors.containsKey("keys") ? "Список ключей недоступен: ошибка хранилища." : "Нет импортированных ключей. Можно подключаться по паролю.",
                     14, 0xFF65728A, false);
             empty.setPadding(dp(16), dp(20), dp(16), dp(20));
             emptyCard.addView(empty);
@@ -1301,7 +1360,7 @@ public final class MainActivity extends Activity {
     private void showKeyActions(SshKey key, View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
         menu.getMenu().add("Переименовать").setOnMenuItemClickListener(item -> {
-            SshKey current = SshKeyStore.get(this, key.id);
+            SshKey current = keyForUi(key.id);
             if (current == null) return true;
             EditText field = input("Название ключа", current.name, InputType.TYPE_CLASS_TEXT);
             new AlertDialog.Builder(this).setTitle("Переименовать ключ")
@@ -1310,7 +1369,7 @@ public final class MainActivity extends Activity {
                         String value = field.getText().toString().trim();
                         if (!value.isEmpty()) {
                             current.name = value;
-                            SshKeyStore.save(this, current);
+                            if (!runStorageWrite(() -> SshKeyStore.save(this, current))) return;
                             renderKeyList();
                         }
                     }).show();
@@ -1322,7 +1381,7 @@ public final class MainActivity extends Activity {
                     .setMessage("Ключ будет удалён из общего хранилища.")
                     .setNegativeButton("Отмена", null)
                     .setPositiveButton("Удалить", (d, w) -> {
-                        SshKeyStore.delete(this, key.id);
+                        if (!runStorageWrite(() -> SshKeyStore.delete(this, key.id))) return;
                         renderKeyList();
                     }).show();
             return true;
