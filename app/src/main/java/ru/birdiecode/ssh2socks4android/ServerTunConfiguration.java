@@ -4,7 +4,11 @@ package ru.birdiecode.ssh2socks4android;
 final class ServerTunConfiguration {
     static String build(Profile profile, String interfaceName, String table,
                                         int mtu, String[] ipv6) {
-        String[] ipv4 = TunAddressPlan.ipv4(TunAddressPlan.unit(interfaceName));
+        return build(profile, interfaceName, table, mtu, ipv6, TunAddressPlan.unit(interfaceName));
+    }
+
+    static String build(Profile profile, String interfaceName, String table, int mtu, String[] ipv6, int addressSlot) {
+        String[] ipv4 = TunAddressPlan.ipv4(addressSlot);
         String server4 = ipv4[0], client4 = ipv4[1];
         String wan = profile.vpnExternalInterface == null ? "" : profile.vpnExternalInterface.trim();
         if (!interfaceName.matches("tun[0-9]{1,9}") || !table.matches("ssh2socks_[a-f0-9]{12}"))
@@ -99,11 +103,19 @@ final class ServerTunConfiguration {
 
 
     static String preview(Profile profile, String interfaceName, String table, String[] ipv6) {
-        return build(profile, interfaceName, table, profile.vpnMtu, ipv6);
+        return preview(profile, interfaceName, table, ipv6, TunAddressPlan.unit(interfaceName));
+    }
+
+    static String preview(Profile profile, String interfaceName, String table, String[] ipv6, int addressSlot) {
+        return build(profile, interfaceName, table, profile.vpnMtu, ipv6, addressSlot);
     }
 
     static String appliedDescription(String stage, Profile profile, String interfaceName, String table, String[] ipv6) {
-        String[] ipv4 = TunAddressPlan.ipv4(TunAddressPlan.unit(interfaceName));
+        return appliedDescription(stage, profile, interfaceName, table, ipv6, TunAddressPlan.unit(interfaceName));
+    }
+
+    static String appliedDescription(String stage, Profile profile, String interfaceName, String table, String[] ipv6, int addressSlot) {
+        String[] ipv4 = TunAddressPlan.ipv4(addressSlot);
         String server4 = ipv4[0], client4 = ipv4[1];
         if ("forward4".equals(stage)) return "IPv4 forwarding включён; при отключении не выключается, чтобы не затронуть других клиентов";
         if ("forward6".equals(stage)) return "IPv6 forwarding включён; при отключении не выключается, чтобы не затронуть других клиентов";
@@ -111,7 +123,7 @@ final class ServerTunConfiguration {
         if ("address6".equals(stage)) return "IPv6 адрес " + ipv6[0] + ", peer " + ipv6[1] + ", маршрут /128 через " + interfaceName;
         if ("link".equals(stage)) return "ip link set dev " + interfaceName + " mtu " + profile.vpnMtu + " up";
         if ("nft".equals(stage)) {
-            String script = build(profile, interfaceName, table, profile.vpnMtu, ipv6);
+            String script = build(profile, interfaceName, table, profile.vpnMtu, ipv6, addressSlot);
             int start = script.indexOf("add table inet $TABLE");
             int end = script.indexOf("\nEOF", start);
             return script.substring(start, end).replace("$TABLE", table).replace("$IF", interfaceName)
