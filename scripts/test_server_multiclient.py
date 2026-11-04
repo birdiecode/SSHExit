@@ -180,6 +180,13 @@ while True:
             denied.proc.wait(timeout=8);denied.reader.join(timeout=1)
             assert denied.proc.returncode != 0 and 'SSHEXIT_ADDRESS_CONFLICT' in denied.log
             assert 'wan0' in run('ip','route','show','exact',denied.ip4+'/32').stdout
+            clients[1].exchange();clients[1].exchange(True)
+            foreign6 = str(ipaddress.IPv6Address(int(ipaddress.IPv6Address('fd42:5353::')) | (1000006<<2) | 2))
+            run('ip','-6','route','add',foreign6+'/128','dev','wan0','metric','1')
+            denied6=Client(classes,1000006);clients.append(denied6)
+            denied6.proc.wait(timeout=8);denied6.reader.join(timeout=1)
+            assert denied6.proc.returncode != 0 and 'SSHEXIT_ADDRESS_CONFLICT' in denied6.log
+            assert 'metric 1 ' in run('ip','-6','route','show','exact',foreign6+'/128').stdout
             clients[1].exchange();clients[1].exchange(True);clients[1].stop()
             run('nft','list','table','inet','foreign_sentinel')
             print('PASS: 3 real IPv4/IPv6 TUN clients, independent stop/expiry, rollback, reconnect and conflict isolation')
