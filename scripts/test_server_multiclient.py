@@ -52,7 +52,8 @@ class Client:
             for line in self.proc.stdout:
                 self.log.append(line.strip()); self.events.put(line.strip())
             self.events.put(None)
-        threading.Thread(target=reader, daemon=True).start()
+        self.reader = threading.Thread(target=reader, daemon=True)
+        self.reader.start()
         self.last_beat = 0
 
     def ready(self):
@@ -65,13 +66,17 @@ class Client:
         raise AssertionError('Setup timed out')
 
     def beat(self):
-        self.proc.stdin.write('alive\n'); self.proc.stdin.flush()
+        try:
+            self.proc.stdin.write('alive\n'); self.proc.stdin.flush()
+        except BrokenPipeError:
+            self.proc.wait(timeout=5); self.reader.join(timeout=1)
+            raise AssertionError('Lease closed for %s: %s; stderr: %s' % (self.unit, self.log, self.proc.stderr.read()))
 
     def stop(self):
         if self.proc.poll() is None:
             self.proc.stdin.write('stop\n'); self.proc.stdin.flush()
         self.proc.wait(timeout=8)
-        time.sleep(.05)
+        self.reader.join(timeout=1)
         assert 'SSHEXIT_CLEANUP_DONE' in self.log, self.log
 
     def exchange(self, v6=False):
@@ -147,7 +152,7 @@ while True:
             clients[1].exchange(); clients[1].exchange(True)
             # Leave the third control pipe open but send no heartbeats: server lease expires.
             clients[2].proc.wait(timeout=6)
-            time.sleep(.05)
+            clients[2].reader.join(timeout=1)
             assert 'SSHEXIT_LEASE_EXPIRED' in clients[2].log
             assert 'SSHEXIT_CLEANUP_DONE' in clients[2].log
             clients[1].exchange(); clients[1].exchange(True)
@@ -156,7 +161,7 @@ while True:
             wrapper.write_text('#!/bin/sh\n[ "$1" = -f ] && exit 1\nexec '+real_nft+' "$@"\n');wrapper.chmod(0o755)
             env=dict(os.environ,PATH=tmp+os.pathsep+os.environ['PATH'])
             failed=Client(classes,1000004,env=env);clients.append(failed)
-            failed.proc.wait(timeout=8);time.sleep(.05)
+            failed.proc.wait(timeout=8);failed.reader.join(timeout=1)
             assert failed.proc.returncode != 0
             assert 'SSHEXIT_CLEANUP_DONE' in failed.log, failed.log
             assert failed.ip4 not in run('ip','-o','addr','show','dev',failed.name).stdout
@@ -172,7 +177,7 @@ while True:
             conflict.ready();conflict.stop();os.close(conflict.fd);conflict.fd=-1
             run('ip','route','add',conflict.ip4+'/32','dev','wan0','proto','static')
             denied=Client(classes,1000005);clients.append(denied)
-            denied.proc.wait(timeout=8);time.sleep(.05)
+            denied.proc.wait(timeout=8);denied.reader.join(timeout=1)
             assert denied.proc.returncode != 0 and 'SSHEXIT_ADDRESS_CONFLICT' in denied.log
             assert 'wan0' in run('ip','route','show','exact',denied.ip4+'/32').stdout
             clients[1].exchange();clients[1].exchange(True);clients[1].stop()
