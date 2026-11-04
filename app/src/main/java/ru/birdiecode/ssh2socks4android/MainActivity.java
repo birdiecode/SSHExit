@@ -128,7 +128,7 @@ public final class MainActivity extends Activity {
         page.addView(statusCard, statusCardParams);
         statusCard.addView(overallStatus);
 
-        storageErrorView = text("", 13, resolveColor(com.google.android.material.R.attr.colorError, 0xFFB42318), false);
+        storageErrorView = text("", 13, resolveColor(android.R.attr.colorError, 0xFFB42318), false);
         storageErrorView.setMaxLines(6);
         storageErrorView.setVisibility(View.GONE);
         storageErrorView.setOnClickListener(v -> new AlertDialog.Builder(this)
