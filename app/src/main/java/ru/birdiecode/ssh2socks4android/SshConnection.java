@@ -864,7 +864,7 @@ final class SshConnection {
                 ? ConnectionFailurePolicy.Kind.CONFIGURATION : ConnectionFailurePolicy.classify(error);
         AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Категория сбоя: " + kind);
         if (kind == ConnectionFailurePolicy.Kind.CANCELLED) {
-            disconnect();
+            shutdown();
             return;
         }
         if (ConnectionFailurePolicy.shouldRetry(kind, true, cancelled, host.isCurrent(this)))
