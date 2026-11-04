@@ -62,7 +62,9 @@ public class ConnectionFailurePolicyTest {
         JSchException error = new JSchException("channel is not opened.");
         assertEquals(TEMPORARY_NETWORK, ConnectionFailurePolicy.channelOpen(error, -1, true).kind);
         assertEquals(TEMPORARY_NETWORK, ConnectionFailurePolicy.channelOpen(error, 4, true).kind);
+        assertEquals(TEMPORARY_NETWORK, ConnectionFailurePolicy.channelOpen(error, 2, true).kind);
         assertEquals(CONFIGURATION, ConnectionFailurePolicy.channelOpen(error, 1, true).kind);
+        assertEquals(CONFIGURATION, ConnectionFailurePolicy.channelOpen(error, 1, false).kind);
         assertEquals(CONFIGURATION, ConnectionFailurePolicy.channelOpen(error, 3, true).kind);
     }
 }
