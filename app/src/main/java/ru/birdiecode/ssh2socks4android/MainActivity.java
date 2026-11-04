@@ -687,7 +687,10 @@ public final class MainActivity extends Activity {
             form.setPadding(dp(16), dp(8), dp(16), dp(12));
             TextView hint = text("SSH: " + stored.username + "@" + formatHostPort(stored.host, stored.sshPort)
                     + "\nНастройка сервера ещё не выполнялась. Измените параметры и подтвердите план. "
-                    + "Изменения сохранятся в профиле. Можно отключить повторный запрос для этого хоста.",
+                    + "Изменения сохранятся в профиле. Можно отключить повторный запрос для этого хоста."
+                    + "\nАдрес клиента IPv4: " + request.optString("ipv4Client")
+                    + "\nАдрес клиента IPv6: " + request.optString("ipv6Client")
+                    + "\nForwarding после отключения остаётся включённым для других клиентов.",
                     13, 0xFF65728A, false);
             form.addView(hint, params(-1, -2));
             EditText wan = input("Внешний интерфейс сервера", request.optString("wan"), InputType.TYPE_CLASS_TEXT);

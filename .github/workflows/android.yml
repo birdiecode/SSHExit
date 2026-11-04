@@ -87,3 +87,19 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+  server-network:
+    name: Concurrent server TUN clients
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install network test tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 nftables
+      - name: Exercise isolated Linux networking
+        # Privileges are limited to this disposable CI test environment.
+        # App-generated server commands never invoke privilege escalation.
+        run: sudo --preserve-env=JAVA_HOME,PATH unshare --mount --net --mount-proc python3 scripts/test_server_multiclient.py
