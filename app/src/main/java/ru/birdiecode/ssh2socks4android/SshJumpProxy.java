@@ -22,7 +22,8 @@ final class SshJumpProxy implements Proxy {
 
     @Override
     public void connect(SocketFactory socketFactory, String host, int port, int timeout) throws Exception {
-        if (!jumpSession.isConnected()) throw new IllegalStateException("Jump server session is not connected");
+        if (!jumpSession.isConnected()) throw new ConnectionFailurePolicy.Failure(
+                ConnectionFailurePolicy.Kind.TEMPORARY_NETWORK, "Jump server session is not connected");
         channel = (ChannelDirectTCPIP) jumpSession.openChannel("direct-tcpip");
         channel.setHost(host);
         channel.setPort(port);
@@ -33,12 +34,20 @@ final class SshJumpProxy implements Proxy {
             output = channel.getOutputStream();
             channel.connect(timeout);
         } catch (Exception e) {
+            int reason = channel.getExitStatus();
+            boolean connected = jumpSession.isConnected();
             try { channel.disconnect(); } catch (Exception ignored) {}
             String target = host != null && host.contains(":")
                     && !(host.startsWith("[") && host.endsWith("]")) ? "[" + host + "]" : host;
-            throw new java.io.IOException("ProxyJump server could not open a TCP forwarding channel to "
+            String message = "ProxyJump server could not open a TCP forwarding channel to "
                     + target + ":" + port
-                    + ". Check target reachability from the jump server and its TCP forwarding policy.", e);
+                    + ". Check target reachability from the jump server and its TCP forwarding policy.";
+            ConnectionFailurePolicy.Kind kind = e instanceof com.jcraft.jsch.JSchException
+                    ? ConnectionFailurePolicy.channelOpen((com.jcraft.jsch.JSchException) e, reason, connected).kind
+                    : e instanceof java.io.IOException
+                    ? ConnectionFailurePolicy.transportIo((java.io.IOException) e, message).kind
+                    : ConnectionFailurePolicy.classify(e);
+            throw new ConnectionFailurePolicy.Failure(kind, message, e);
         }
         socket = new SshStreamSocket(input, output);
         input = socket.getInputStream();
