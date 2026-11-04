@@ -109,6 +109,7 @@ final class Socks5Proxy {
                     clientSlots.release(); closeQuietly(client); continue;
                 }
                 clients.add(client);
+                if (server != listener || listener.isClosed()) { releaseClient(client); return; }
                 Socket accepted = client;
                 try {
                     handlers.execute(() -> handle(accepted, listener));
