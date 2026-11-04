@@ -27,11 +27,11 @@ final class ConnectionStateMachine {
                     allowed = next == State.AUTHENTICATING; break;
                 case AUTHENTICATING:
                     allowed = EnumSet.of(State.NEEDS_PASSWORD, State.NEEDS_TRUST,
-                            State.NEEDS_SERVER_CONFIG, State.PREPARING_TUN, State.CONNECTED).contains(next); break;
+                            State.PREPARING_TUN, State.CONNECTED).contains(next); break;
                 case NEEDS_SERVER_CONFIG:
-                    allowed = next == State.PREPARING_TUN; break;
-                case PREPARING_TUN:
                     allowed = next == State.CONFIGURING_SERVER; break;
+                case PREPARING_TUN:
+                    allowed = next == State.NEEDS_SERVER_CONFIG || next == State.CONFIGURING_SERVER; break;
                 case CONFIGURING_SERVER:
                     allowed = next == State.CONNECTED; break;
                 case CONNECTED:

@@ -90,6 +90,7 @@ final class SshConnection {
         if ("NEEDS_SERVER_CONFIG".equals(state)) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Пользователь отменил серверный план; настройки не применялись");
         cancelled = true;
         setStatus(activeProfileId, "IDLE", "Disconnected");
+        if (retry != null) { retry.cancel(false); retry = null; }
         worker.shutdownNow();
         pendingPasswords.clear();
         host.cleanup(this::closeAllResources);
@@ -105,7 +106,7 @@ final class SshConnection {
         connect(activeProfileId);
     }
     private void checkHealth() {
-        if (!"CONNECTED".equals(state) || cancelled) return;
+        if ((!"CONNECTED".equals(state) && !"NEEDS_SERVER_CONFIG".equals(state)) || cancelled) return;
         VpnPacketBridge bridge = vpnBridge;
         if (bridge != null && !bridge.failure().isEmpty()) {
             fail(activeProfileId, "Ошибка системного TUN; трафик заблокирован: " + bridge.failure());
@@ -167,7 +168,8 @@ final class SshConnection {
     }
 
     private void checkCancelled() throws IOException {
-        if (cancelled || !host.isCurrent(this)) throw new IOException("Подключение отменено");
+        if (cancelled || !host.isCurrent(this)) throw new ConnectionFailurePolicy.Failure(
+                ConnectionFailurePolicy.Kind.CANCELLED, "Подключение отменено");
     }
     private synchronized void setStatus(String profileId, String state, String detail) {
         if (!host.isCurrent(this) || (cancelled && !"IDLE".equals(state))) return;
@@ -198,9 +200,10 @@ final class SshConnection {
     private final Map<String, String> pendingPasswords = new java.util.concurrent.ConcurrentHashMap<>();
     private final Object vpnLock = new Object();
     private volatile VpnPacketBridge vpnBridge;
-    private boolean vpnEverConnected;
+    private long serverLeaseRecoveryDeadlineNanos;
     static final String VPN_BLOCKED_PREFIX = "VPN_BLOCKED: ";
     private volatile OpenSshTunChannel activeTun;
+    private volatile VpnPacketBridge.Endpoint activeVpnPackets;
     private volatile ChannelExec serverConfigChannel;
     private volatile OutputStream serverConfigControl;
     private volatile Thread serverOutputThread;
@@ -330,12 +333,14 @@ final class SshConnection {
                         ProfileStore.save(context, node);
                         throw new NodeException(node,
                                 "Проверка fingerprint не пройдена. Доверенный: "
-                                        + node.hostFingerprint + " · получен: " + offered, null);
+                                        + node.hostFingerprint + " · получен: " + offered,
+                                new ConnectionFailurePolicy.Failure(ConnectionFailurePolicy.Kind.TRUST, "Host key changed"));
                     }
                     if (isAuthenticationFailure(e)) {
                         if (promptedPassword != null) {
                             pendingPasswords.remove(node.id);
-                            throw new NodeException(node, "Пароль отклонён", null);
+                            throw new NodeException(node, "Пароль отклонён", new ConnectionFailurePolicy.Failure(
+                                    ConnectionFailurePolicy.Kind.AUTHENTICATION, "Пароль отклонён"));
                         }
                         requestPassword(targetId, node);
                         return;
@@ -364,6 +369,7 @@ final class SshConnection {
             checkCancelled();
             activeSession = previous;
             if (vpnMode) {
+                prepareVpnTunnel(target, previous);
                 requestServerPlan(target, previous);
                 return;
             }
@@ -386,8 +392,7 @@ final class SshConnection {
         Session previous = activeSession;
             StringBuilder connectedDetails = new StringBuilder();
             if (vpnMode) {
-                setStatus(targetId, "PREPARING_TUN", "Открытие SSH TUN");
-                startVpnTunnel(target, previous);
+                configurePreparedVpnTunnel(target, previous);
                 connectedDetails.append("SSH TUN VPN active");
             }
             if (socksMode) {
@@ -399,13 +404,14 @@ final class SshConnection {
                 connectedDetails.append("SOCKS5 127.0.0.1:").append(target.localPort);
             }
             checkCancelled();
-            if (vpnMode) vpnEverConnected = true;
+            serverLeaseRecoveryDeadlineNanos = 0;
             connectedAt = System.currentTimeMillis();
             setStatus( targetId, "CONNECTED", connectedDetails.toString());
             updateNotification("SSH tunnel connected", connectedDetails + " via " + chainLabel(chain));
     }
 
     private void requestServerPlan(Profile target, Session endpoint) throws Exception {
+        requirePreparedVpnTunnel();
         activeVpnTable = "ssh2socks_" + shortProfileToken(java.util.UUID.randomUUID().toString());
         String wan = target.vpnExternalInterface.trim();
         if (target.vpnIpv4 && wan.isEmpty()) {
@@ -422,9 +428,20 @@ final class SshConnection {
                     if (probe.isClosed()) break;
                     Thread.sleep(25);
                 }
+                if (!probe.isClosed()) throw new java.net.SocketTimeoutException("Тайм-аут определения внешнего интерфейса");
+                if (!endpoint.isConnected() || probe.getExitStatus() < 0)
+                    throw new ConnectionFailurePolicy.Failure(ConnectionFailurePolicy.Kind.TEMPORARY_NETWORK,
+                            "SSH-соединение потеряно при определении внешнего интерфейса");
+                if (probe.getExitStatus() != 0)
+                    throw new IllegalArgumentException("Сервер отклонил определение внешнего интерфейса");
                 wan = value.toString("UTF-8").trim();
                 if (!wan.matches("[A-Za-z0-9_.:-]{1,15}"))
-                    throw new IOException("Не удалось определить внешний IPv4-интерфейс сервера");
+                    throw new IllegalArgumentException("Не удалось определить внешний IPv4-интерфейс сервера");
+            } catch (ConnectionFailurePolicy.Failure error) { throw error; }
+            catch (IOException error) {
+                throw ConnectionFailurePolicy.transportIo(error, "Ошибка SSH при определении внешнего интерфейса");
+            } catch (com.jcraft.jsch.JSchException error) {
+                throw ConnectionFailurePolicy.channelOpen(error, probe.getExitStatus(), endpoint.isConnected());
             } finally { probe.disconnect(); }
         }
         if (target.serverSkipConfirmation) {
@@ -436,6 +453,7 @@ final class SshConnection {
             completeConnection(target);
             return;
         }
+        requirePreparedVpnTunnel();
         String[] ipv6 = vpnIpv6Addresses(target);
         pendingServerRequest = java.util.UUID.randomUUID().toString();
         org.json.JSONObject request = new org.json.JSONObject();
@@ -457,9 +475,11 @@ final class SshConnection {
         try {
             checkCancelled();
             if (activeSession == null || !activeSession.isConnected())
-                throw new IOException("SSH-сессия закрыта; подключитесь заново");
+                throw new ConnectionFailurePolicy.Failure(ConnectionFailurePolicy.Kind.TEMPORARY_NETWORK,
+                        "SSH-сессия закрыта во время подтверждения плана");
+            requirePreparedVpnTunnel();
             Profile profile = ProfileStore.get(context, activeProfileId);
-            if (profile == null) throw new IOException("Профиль удалён");
+            if (profile == null) throw new IllegalArgumentException("Профиль удалён");
             profile.vpnExternalInterface = intent.getStringExtra("server_wan");
             if (profile.vpnExternalInterface == null) profile.vpnExternalInterface = "";
             if (profile.vpnIpv4 && profile.vpnExternalInterface.isEmpty())
@@ -585,7 +605,8 @@ final class SshConnection {
         } : null, 20_000);
     }
 
-    private void startVpnTunnel(Profile profile, Session endpoint) throws Exception {
+    private void prepareVpnTunnel(Profile profile, Session endpoint) throws Exception {
+        setStatus(activeProfileId, "PREPARING_TUN", "Открытие SSH TUN");
         VpnPacketBridge bridge = vpnBridge;
         if (bridge == null) throw new IllegalStateException("VPN-интерфейс не создан");
         if (activeTunUnit < 0) throw new IllegalStateException("Серверный план не подготовлен");
@@ -598,20 +619,44 @@ final class SshConnection {
         tun.setInputStream(packets.outgoing(), true);
         tun.setOutputStream(packets.incoming(), true);
         activeTun = tun;
+        activeVpnPackets = packets;
         try {
-            tun.openOn(endpoint, 20_000);
+            try { tun.openOn(endpoint, 20_000); }
+            catch (com.jcraft.jsch.JSchException error) {
+                throw ConnectionFailurePolicy.channelOpen(error, tun.getExitStatus(), endpoint.isConnected());
+            }
             checkCancelled();
             AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SSH TUN открыт, unit=" + activeTunUnit);
-            setStatus(activeProfileId, "CONFIGURING_SERVER", "Настройка сервера");
-            startServerTunConfig(endpoint, profile, mtu, activeTunUnit);
-            checkCancelled();
-            packets.enable();
-            AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Передача VPN разрешена после восстановления SSH и настройки сервера");
         } catch (Exception error) {
             bridge.block();
             tun.disconnect();
             throw error;
         }
+    }
+
+    private void requirePreparedVpnTunnel() throws IOException {
+        OpenSshTunChannel tun = activeTun;
+        if (tun == null || !tun.isConnected() || tun.isClosed() || activeVpnPackets == null)
+            throw new ConnectionFailurePolicy.Failure(ConnectionFailurePolicy.Kind.TEMPORARY_NETWORK,
+                    "SSH TUN закрыт до применения серверных настроек");
+    }
+
+    private void configurePreparedVpnTunnel(Profile profile, Session endpoint) throws Exception {
+        checkCancelled();
+        requirePreparedVpnTunnel();
+        VpnPacketBridge.Endpoint packets = activeVpnPackets;
+        setStatus(activeProfileId, "CONFIGURING_SERVER", "Настройка сервера");
+        int mtu = profile.vpnMtu > 0 ? profile.vpnMtu : DEFAULT_VPN_MTU;
+        try { startServerTunConfig(endpoint, profile, mtu, activeTunUnit); }
+        catch (ConnectionFailurePolicy.Failure error) { throw error; }
+        catch (IOException error) {
+            throw ConnectionFailurePolicy.transportIo(error, "Потеря SSH во время настройки сервера");
+        }
+        checkCancelled();
+        requirePreparedVpnTunnel();
+        packets.enable();
+        AppLog.INSTANCE.record(AppLog.INFO, connectionId,
+                "Передача VPN разрешена после открытия SSH TUN и применения серверного плана");
     }
 
     private void startServerTunConfig(Session endpoint, Profile profile, int mtu, int unit) throws Exception {
@@ -630,7 +675,10 @@ final class SshConnection {
         serverConfigControl = monitor.getOutputStream();
         serverConfigChannel = monitor;
         lastServerHeartbeatNanos = System.nanoTime();
-        monitor.connect(20_000);
+        try { monitor.connect(20_000); }
+        catch (com.jcraft.jsch.JSchException error) {
+            throw ConnectionFailurePolicy.channelOpen(error, monitor.getExitStatus(), endpoint.isConnected());
+        }
         StringBuilder response = new StringBuilder();
         long deadline = System.currentTimeMillis() + 20_000;
         byte[] buffer = new byte[1024];
@@ -653,9 +701,12 @@ final class SshConnection {
         if (lastNewline >= 0) for (String line : response.substring(0, lastNewline).split("\n")) recordServerLine(run, line);
         if (!ready) {
             String diagnostic = stderr.toString(StandardCharsets.UTF_8.name()).trim();
+            int exitStatus = monitor.getExitStatus();
             monitor.disconnect();
             String details = response.toString().trim();
-            throw new ServerSetupException(monitor.getExitStatus(), "Сервер не смог настроить SSH TUN"
+            throw new ConnectionFailurePolicy.Failure(ConnectionFailurePolicy.serverExit(exitStatus,
+                    serverLeaseRecoveryDeadlineNanos != 0 && System.nanoTime() < serverLeaseRecoveryDeadlineNanos),
+                    "Сервер не смог настроить SSH TUN"
                     + (details.isEmpty() ? "" : ": " + details)
                     + (diagnostic.isEmpty() ? "" : " · " + diagnostic));
         }
@@ -705,13 +756,17 @@ final class SshConnection {
                 Thread reader = serverOutputThread;
                 if (reader != null && reader != Thread.currentThread()) reader.join(2000);
             } catch (Exception ignored) { }
-            if (run == null || !run.cleanupConfirmed)
+            if (run == null || !run.cleanupConfirmed) {
+                if (serverLeaseRecoveryDeadlineNanos == 0 && run != null)
+                    serverLeaseRecoveryDeadlineNanos = System.nanoTime() + 65_000_000_000L;
                 AppLog.INSTANCE.record(AppLog.WARN, connectionId, "Очистка сервера не подтверждена (сеть или SSH могли быть недоступны)");
+            }
             try { monitor.disconnect(); } catch (Exception ignored) { }
             serverOutputThread = null;
         }
         OpenSshTunChannel tun = activeTun;
         activeTun = null;
+        activeVpnPackets = null;
         if (tun != null) {
             try { tun.disconnect(); } catch (Exception ignored) {}
         }
@@ -757,11 +812,7 @@ final class SshConnection {
     }
 
     private boolean isAuthenticationFailure(Exception error) {
-        String message = error.getMessage();
-        if (message == null) return false;
-        String lower = message.toLowerCase(java.util.Locale.ROOT);
-        return lower.contains("auth fail") || lower.contains("authentication failed")
-                || lower.contains("auth cancel") || lower.contains("no more authentication methods");
+        return ConnectionFailurePolicy.classify(error) == ConnectionFailurePolicy.Kind.AUTHENTICATION;
     }
 
     private void requestPassword(String targetId, Profile node) {
@@ -830,23 +881,17 @@ final class SshConnection {
         AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Системный TUN закрыт по завершении VPN");
     }
 
-    private static final class ServerSetupException extends IOException {
-        final boolean retryable;
-        ServerSetupException(int exitStatus, String message) {
-            super(message);
-            retryable = exitStatus < 0 || exitStatus == 22 || exitStatus == 24
-                    || (exitStatus >= 29 && exitStatus <= 32);
-        }
-    }
-
     private void handleConnectFailure(Exception error, String message) {
         if (cancelled || !host.isCurrent(this)) { closeTransport(); return; }
-        boolean nodeRetry = error instanceof NodeException && error.getCause() != null
-                && !message.toLowerCase(Locale.ROOT).contains("fingerprint") && !isAuthenticationFailure(error);
-        boolean vpnRetry = hasRetainedVpn() && vpnEverConnected
-                && (error instanceof IOException || error instanceof com.jcraft.jsch.JSchException)
-                && (!(error instanceof ServerSetupException) || ((ServerSetupException) error).retryable);
-        if (!SshTransportSocketFactory.isProtectionFailure(error) && (nodeRetry || vpnRetry)) retryOrFail(message);
+        ConnectionFailurePolicy.Kind kind = SshTransportSocketFactory.isProtectionFailure(error)
+                ? ConnectionFailurePolicy.Kind.CONFIGURATION : ConnectionFailurePolicy.classify(error);
+        AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Категория сбоя: " + kind);
+        if (kind == ConnectionFailurePolicy.Kind.CANCELLED) {
+            shutdown();
+            return;
+        }
+        if (ConnectionFailurePolicy.shouldRetry(kind, true, cancelled, host.isCurrent(this)))
+            retryOrFail(message); // Reads the latest per-profile auto-reconnect setting.
         else fail(activeProfileId, message);
     }
 

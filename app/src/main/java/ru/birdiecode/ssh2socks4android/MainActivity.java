@@ -84,6 +84,9 @@ public final class MainActivity extends Activity {
     private String promptedFingerprint = "";
     private String promptedPasswordRequest = "";
     private String pendingVpnProfileId = "";
+    private String submittedServerRequest = "";
+    private AlertDialog serverPlanDialog;
+    private String serverPlanProfileId = "", serverPlanEncoded = "";
 
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -96,6 +99,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) submittedServerRequest = savedInstanceState.getString("submittedServerRequest", "");
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
@@ -215,6 +219,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
+        out.putString("submittedServerRequest", submittedServerRequest);
         super.onSaveInstanceState(out);
         if (bottomNavigation != null) out.putInt("selectedTab", bottomNavigation.getSelectedItemId());
     }
@@ -548,6 +553,11 @@ public final class MainActivity extends Activity {
 
     private void refreshStatuses() {
         if (overallStatus == null) return;
+        if (serverPlanDialog != null && (!"NEEDS_SERVER_CONFIG".equals(
+                ProfileStore.status(this, serverPlanProfileId))
+                || !serverPlanEncoded.equals(ProfileStore.statusDetail(this, serverPlanProfileId)))) {
+            serverPlanDialog.dismiss();
+        }
         int connected = 0, pending = 0;
         String requestId = "", requestState = "", requestDetail = "";
         for (Profile p : readProfilesForUi()) {
@@ -761,6 +771,8 @@ public final class MainActivity extends Activity {
         try {
             org.json.JSONObject request = new org.json.JSONObject(encoded);
             String requestId = request.getString("requestId");
+            String submission = targetId + ":" + requestId;
+            if (submission.equals(submittedServerRequest)) return;
             String tun = request.getString("interface"), table = request.getString("table");
             int addressSlot = request.getInt("addressSlot");
             String[] ipv6 = {request.getString("ipv6Server"), request.getString("ipv6Client")};
@@ -769,7 +781,7 @@ public final class MainActivity extends Activity {
             form.setOrientation(LinearLayout.VERTICAL);
             form.setPadding(dp(16), dp(8), dp(16), dp(12));
             TextView hint = text("SSH: " + stored.username + "@" + formatHostPort(stored.host, stored.sshPort)
-                    + "\nНастройка сервера ещё не выполнялась. Измените параметры и подтвердите план. "
+                    + "\nSSH TUN уже открыт. Серверные адреса, маршруты и правила ещё не применены. Измените параметры и подтвердите план. "
                     + "Изменения сохранятся в профиле. Можно отключить повторный запрос для этого хоста."
                     + "\nАдрес клиента IPv4: " + request.optString("ipv4Client")
                     + "\nАдрес клиента IPv6: " + request.optString("ipv6Client")
@@ -849,14 +861,22 @@ public final class MainActivity extends Activity {
                     intent.putExtra("server_wan", draft.vpnExternalInterface);
                     intent.putExtra("serverSkipConfirmation", skipConfirmation.isChecked());
                     for (int i = 0; i < choices.length; i++) intent.putExtra(optionKeys[i], choices[i].isChecked());
+                    submittedServerRequest = submission;
                     if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent); else startService(intent);
                     dialog.dismiss();
                 } catch (Exception error) {
+                    submittedServerRequest = "";
                     Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
                 }
             }));
             connectionPromptOpen = true;
-            dialog.setOnDismissListener(ignored -> connectionPromptOpen = false);
+            serverPlanDialog = dialog;
+            serverPlanProfileId = targetId;
+            serverPlanEncoded = encoded;
+            dialog.setOnDismissListener(ignored -> {
+                connectionPromptOpen = false;
+                if (serverPlanDialog == dialog) serverPlanDialog = null;
+            });
             dialog.show();
         } catch (Exception error) {
             Toast.makeText(this, "Не удалось открыть серверный план", Toast.LENGTH_LONG).show();
