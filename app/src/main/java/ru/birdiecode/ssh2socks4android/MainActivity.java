@@ -99,6 +99,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) submittedServerRequest = savedInstanceState.getString("submittedServerRequest", "");
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
@@ -218,6 +219,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onSaveInstanceState(Bundle out) {
+        out.putString("submittedServerRequest", submittedServerRequest);
         super.onSaveInstanceState(out);
         if (bottomNavigation != null) out.putInt("selectedTab", bottomNavigation.getSelectedItemId());
     }
