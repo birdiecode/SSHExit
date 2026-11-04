@@ -116,7 +116,12 @@ public final class SshTunnelService extends VpnService {
                 retained.execute(() -> retained.connect(target));
             } else if (connection == null || !connection.isLive()) {
                 if (connection != null) connection.shutdown();
-                connection = new SshConnection(this, connectionHost, id);
+                try { connection = new SshConnection(this, connectionHost, id); }
+                catch (JsonStoreGuard.StorageException error) {
+                    ProfileStore.setStatus(this, id, "ERROR", error.getMessage());
+                    refreshNotification();
+                    return START_NOT_STICKY;
+                }
                 connections.put(id, connection);
                 SshConnection next = connection;
                 String target = id;
@@ -179,7 +184,9 @@ public final class SshTunnelService extends VpnService {
         for (SshConnection connection : connections.values()) {
             String id = connection.profileId();
             if (uiVisible || !connection.isLive() || !"NEEDS_SERVER_CONFIG".equals(connection.state)) continue;
-            Profile profile = ProfileStore.get(this, id);
+            Profile profile;
+            try { profile = ProfileStore.get(this, id); }
+            catch (JsonStoreGuard.StorageException error) { continue; }
             if (profile == null || profile.serverSkipConfirmation) continue;
             String request = ProfileStore.statusDetail(this, id);
             if (request == null || request.isEmpty()) continue;

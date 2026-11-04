@@ -77,7 +77,11 @@ final class SshConnection {
     boolean isLive() {
         return !cancelled && !"IDLE".equals(state) && (!"ERROR".equals(state) || hasRetainedVpn());
     }
-    void execute(Runnable action) { worker.execute(() -> { if (!cancelled) action.run(); }); }
+    void execute(Runnable action) { worker.execute(() -> {
+        if (cancelled) return;
+        try { action.run(); }
+        catch (JsonStoreGuard.StorageException error) { fail(activeProfileId, error.getMessage()); }
+    }); }
     boolean usesVpn() { return vpnRequested; }
     boolean hasRetainedVpn() { VpnPacketBridge bridge = vpnBridge; return bridge != null && !bridge.isClosed(); }
     private int vpnAddressSlot() { VpnPacketBridge bridge = vpnBridge; return bridge == null ? activeTunUnit : bridge.addressSlot(); }
@@ -143,6 +147,10 @@ final class SshConnection {
     }
 
     private void retryOrFail(String reason) {
+        try { retryOrFailUnchecked(reason); }
+        catch (JsonStoreGuard.StorageException error) { fail(activeProfileId, error.getMessage()); }
+    }
+    private void retryOrFailUnchecked(String reason) {
         closeTransport();
         Profile profile = ProfileStore.get(context, activeProfileId);
         if (cancelled || !host.isCurrent(this)) return;
@@ -247,6 +255,10 @@ final class SshConnection {
     }
 
     void connect(String targetId) {
+        try { connectUnchecked(targetId); }
+        catch (JsonStoreGuard.StorageException error) { fail(targetId, error.getMessage()); }
+    }
+    private void connectUnchecked(String targetId) {
         if (cancelled) return;
         closeTransport();
         Profile target = ProfileStore.get(context, targetId);

@@ -21,12 +21,10 @@ final class ProfileStore {
     static synchronized List<Profile> all(Context context) {
         ArrayList<Profile> profiles = new ArrayList<>();
         try {
-            String encoded = prefs(context).getString(PROFILES, "[]");
-            JSONArray array = new JSONArray(encoded);
-            if (array == null) return profiles;
+            JSONArray array = JsonStoreGuard.read(prefs(context), PROFILES, toJson(new Profile()), "Хранилище хостов");
             for (int i = 0; i < array.length(); i++) {
                 JSONObject json = array.optJSONObject(i);
-                if (json == null) continue;
+                if (json == null) throw new IllegalArgumentException();
                 Profile p = new Profile();
                 p.id = json.optString("id");
                 p.name = json.optString("name");
@@ -68,10 +66,9 @@ final class ProfileStore {
                 p.jumpFingerprint = json.optString("jumpFingerprint");
                 if (!p.id.isEmpty()) profiles.add(p);
             }
-        } catch (Exception ignored) {
-            // A malformed preference should not crash the app; the user can recreate the profile.
-        }
-        if (!prefs(context).getBoolean(GRAPH_MIGRATED, false)) {
+        } catch (JsonStoreGuard.StorageException error) { throw error; }
+        catch (Exception error) { throw JsonStoreGuard.problem("Хранилище хостов", "не прочитано. Запись заблокирована."); }
+        if (!JsonStoreGuard.flag(prefs(context), GRAPH_MIGRATED, "Хранилище хостов")) {
             migrateLegacyJumpSettings(context, profiles);
         }
         return profiles;
@@ -116,13 +113,10 @@ final class ProfileStore {
             source.jumpFingerprint = "";
             changed = true;
         }
-        SharedPreferences.Editor editor = prefs(context).edit().putBoolean(GRAPH_MIGRATED, true);
-        if (changed) {
-            JSONArray array = new JSONArray();
-            for (Profile profile : profiles) array.put(toJson(profile));
-            editor.putString(PROFILES, array.toString());
-        }
-        editor.apply();
+        JSONArray array = new JSONArray();
+        for (Profile profile : profiles) array.put(toJson(profile));
+        JsonStoreGuard.write(prefs(context), PROFILES, array, toJson(new Profile()),
+                "Хранилище хостов", GRAPH_MIGRATED);
     }
 
     static synchronized Profile get(Context context, String id) {
@@ -143,7 +137,7 @@ final class ProfileStore {
         if (!replaced) profiles.add(profile);
         JSONArray array = new JSONArray();
         for (Profile p : profiles) array.put(toJson(p));
-        prefs(context).edit().putString(PROFILES, array.toString()).apply();
+        JsonStoreGuard.write(prefs(context), PROFILES, array, toJson(new Profile()), "Хранилище хостов", null);
     }
 
     static synchronized List<Profile> dependents(Context context, String id) {
@@ -160,7 +154,7 @@ final class ProfileStore {
             if (id.equals(p.jumpProfileId)) p.jumpProfileId = "";
             array.put(toJson(p));
         }
-        prefs(context).edit().putString(PROFILES, array.toString()).apply();
+        JsonStoreGuard.write(prefs(context), PROFILES, array, toJson(new Profile()), "Хранилище хостов", null);
     }
 
     static synchronized void setStatus(Context context, String profileId, String status, String detail) {
@@ -251,7 +245,7 @@ final class ProfileStore {
             json.put("encryptedJumpPassword", p.encryptedJumpPassword);
             json.put("jumpKeyId", p.jumpKeyId);
             json.put("jumpFingerprint", p.jumpFingerprint);
-        } catch (Exception ignored) {}
+        } catch (Exception error) { throw JsonStoreGuard.problem("Хранилище хостов", "не сохранено: ошибка сериализации."); }
         return json;
     }
 
