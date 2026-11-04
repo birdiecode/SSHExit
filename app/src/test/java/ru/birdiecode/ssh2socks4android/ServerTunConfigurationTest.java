@@ -36,7 +36,7 @@ public class ServerTunConfigurationTest {
                 preview.indexOf("\nEOF"))
                 .replace("$TABLE", "ssh2socks_012345abcdef").replace("$IF", "tun123").replace("$WAN", "ens3");
         assertEquals(actualRules, applied);
-        assertTrue(applied.contains("oifname \"ens3\" ip saddr 10.253.0.2 masquerade"));
+        assertTrue(applied.contains("oifname \"ens3\" ip saddr 10.0.1.238 masquerade"));
     }
 
     @Test public void disabledChangesAreAbsentFromServerPlan() {
@@ -68,7 +68,9 @@ public class ServerTunConfigurationTest {
             assertEquals(p.serverAcceptReturn, script.contains("ct state established,related accept"));
             assertTrue(script.indexOf("echo SSHEXIT_APPLIED:nft") > script.indexOf("\nEOF"));
             assertTrue(script.contains("trap cleanup EXIT"));
-            assertTrue(script.contains("while IFS= read -r command"));
+            assertTrue(script.contains("timeout 60 sh -c"));
+            assertFalse(script.contains("printf '0"));
+            assertFalse(script.contains("route replace"));
             assertTrue(script.contains("SSHEXIT_CLEANUP_FAILED"));
         }
     }
