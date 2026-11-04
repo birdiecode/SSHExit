@@ -17,7 +17,7 @@ final class ConnectionStateMachine {
         boolean allowed;
         if (next == State.DISCONNECTING) allowed = state != State.DISCONNECTED;
         else if (next == State.RECONNECTING) allowed = EnumSet.of(State.CONNECTED, State.CONNECTING,
-                State.AUTHENTICATING, State.PREPARING_TUN, State.CONFIGURING_SERVER).contains(state);
+                State.AUTHENTICATING, State.NEEDS_SERVER_CONFIG, State.PREPARING_TUN, State.CONFIGURING_SERVER).contains(state);
         else if (next == State.ERROR) allowed = state != State.DISCONNECTED && state != State.DISCONNECTING;
         else {
             switch (state) {
