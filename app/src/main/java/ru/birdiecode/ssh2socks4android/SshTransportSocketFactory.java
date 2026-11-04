@@ -21,6 +21,8 @@ final class SshTransportSocketFactory implements SocketFactory {
     @Override public Socket createSocket(String host, int port) throws IOException {
         Socket socket = new Socket();
         try {
+            socket.setKeepAlive(true);
+            socket.setTcpNoDelay(true);
             if (protector != null) {
                 // Socket construction may be lazy. Binding materializes its file descriptor.
                 socket.bind(new InetSocketAddress(0));

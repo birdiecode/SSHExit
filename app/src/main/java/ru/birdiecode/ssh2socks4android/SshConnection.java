@@ -101,9 +101,22 @@ final class SshConnection {
     private void checkHealth() {
         if (!"CONNECTED".equals(state) || cancelled) return;
         String failure = "";
-        if (activeSession == null || !activeSession.isConnected()) failure = "Закрыта SSH-сессия";
-        else if (activeTun != null && activeTun.isClosed()) failure = "Закрыт канал SSH TUN: " + activeTun.getFailureReason();
-        else if (serverConfigChannel != null && serverConfigChannel.isClosed())
+        synchronized (activeSessions) {
+            for (int i = 0; i < activeSessions.size(); i++) {
+                Session session = activeSessions.get(i);
+                if (!session.isConnected()) {
+                    failure = "SSH-узел " + (i + 1) + "/" + activeSessions.size()
+                            + " (" + session.getHost() + "): соединение закрыто или истёк keepalive";
+                    break;
+                }
+            }
+        }
+        if (failure.isEmpty() && (activeSession == null || !activeSession.isConnected()))
+            failure = "Закрыта SSH-сессия или истёк keepalive";
+        if (failure.isEmpty() && activeProxy != null && !activeProxy.isRunning())
+            failure = "Локальный SOCKS5 listener остановлен";
+        if (failure.isEmpty() && activeTun != null && activeTun.isClosed()) failure = "Закрыт канал SSH TUN: " + activeTun.getFailureReason();
+        else if (failure.isEmpty() && serverConfigChannel != null && serverConfigChannel.isClosed())
             failure = "Завершился серверный процесс настройки TUN, exit=" + serverConfigChannel.getExitStatus();
         boolean lost = !failure.isEmpty();
         if (lost && System.currentTimeMillis() - connectedAt >= 60000) retryAttempt = 0;
@@ -308,6 +321,9 @@ final class SshConnection {
                     pendingPasswords.remove(node.id);
                 }
                 AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "SSH-узел аутентифицирован");
+                AppLog.INSTANCE.record(AppLog.DEBUG, connectionId,
+                        "SSH keepalive: узел " + (chain.indexOf(node) + 1) + "/" + chain.size()
+                                + ", интервал 10 с, до 3 запросов без ответа");
                 previous = session;
             }
 

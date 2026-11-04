@@ -46,6 +46,8 @@ public class SshTransportSocketFactoryTest {
                      listener.getInetAddress().getHostAddress(), listener.getLocalPort());
              Socket accepted = listener.accept()) {
             assertTrue(client.isConnected());
+            assertTrue(client.getKeepAlive());
+            assertTrue(client.getTcpNoDelay());
         }
     }
 }
