@@ -512,7 +512,8 @@ public final class MainActivity extends Activity {
             }
             if (showError) {
                 String rawError = detail == null || detail.trim().isEmpty() ? "Подробности отсутствуют." : detail;
-                if (errorSummary != null) errorSummary.setText(friendlyConnectionError(rawError));
+                if (errorSummary != null) errorSummary.setText((rawError.startsWith(SshConnection.VPN_BLOCKED_PREFIX)
+                        ? "Трафик VPN заблокирован. Нажмите карточку, чтобы отключить VPN.\n" : "") + friendlyConnectionError(rawError));
                 if (technicalDetails != null) technicalDetails.setText(rawError);
             }
             if (row == null) continue;
@@ -680,6 +681,7 @@ public final class MainActivity extends Activity {
             org.json.JSONObject request = new org.json.JSONObject(encoded);
             String requestId = request.getString("requestId");
             String tun = request.getString("interface"), table = request.getString("table");
+            int addressSlot = request.getInt("addressSlot");
             String[] ipv6 = {request.getString("ipv6Server"), request.getString("ipv6Client")};
             Profile draft = copy(stored);
             LinearLayout form = new LinearLayout(this);
@@ -731,7 +733,7 @@ public final class MainActivity extends Activity {
                 draft.serverAcceptOutbound = choices[3].isChecked();
                 draft.serverAcceptReturn = choices[4].isChecked();
                 try {
-                    preview.setText(ServerTunConfiguration.preview(draft, tun, table, ipv6));
+                    preview.setText(ServerTunConfiguration.preview(draft, tun, table, ipv6, addressSlot));
                 } catch (IllegalArgumentException invalid) {
                     preview.setText("Исправьте параметры: " + invalid.getMessage());
                 }
@@ -759,7 +761,7 @@ public final class MainActivity extends Activity {
                     }
                     if (draft.vpnIpv4 && draft.vpnExternalInterface.isEmpty())
                         throw new IllegalArgumentException("Укажите внешний интерфейс IPv4");
-                    ServerTunConfiguration.preview(draft, tun, table, ipv6);
+                    ServerTunConfiguration.preview(draft, tun, table, ipv6, addressSlot);
                     Intent intent = new Intent(this, SshTunnelService.class).setAction(SshTunnelService.ACTION_SERVER_CONFIG);
                     intent.putExtra(SshTunnelService.EXTRA_PROFILE_ID, targetId);
                     intent.putExtra("server_request", requestId);
@@ -782,7 +784,9 @@ public final class MainActivity extends Activity {
 
     private void toggle(Profile profile) {
         String status = ProfileStore.status(this, profile.id);
-        if (!"IDLE".equals(status) && !"ERROR".equals(status)) {
+        boolean blockedVpn = "ERROR".equals(status)
+                && ProfileStore.statusDetail(this, profile.id).startsWith(SshConnection.VPN_BLOCKED_PREFIX);
+        if (blockedVpn || (!"IDLE".equals(status) && !"ERROR".equals(status))) {
             startTunnelAction(SshTunnelService.ACTION_STOP, profile.id);
         } else if ("VPN".equals(profile.connectionMode) || "BOTH".equals(profile.connectionMode)) {
             requestVpnPermissionAndConnect(profile);
