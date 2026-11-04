@@ -297,6 +297,22 @@ public final class MainActivity extends Activity {
         startActivityForResult(picker, REQUEST_KEY);
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        SshTunnelService.setUiVisible(true);
+    }
+
+    @Override protected void onStop() {
+        if (!isChangingConfigurations()) SshTunnelService.setUiVisible(false);
+        super.onStop();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        refreshStatuses();
+    }
+
     @Override protected void onResume() {
         super.onResume();
         handler.removeCallbacks(poll);
@@ -482,6 +498,12 @@ public final class MainActivity extends Activity {
             if (requestId.isEmpty() && ("NEEDS_TRUST".equals(state) || "NEEDS_PASSWORD".equals(state) || "NEEDS_SERVER_CONFIG".equals(state))) {
                 requestId = p.id; requestState = state; requestDetail = ProfileStore.statusDetail(this, p.id);
             }
+        }
+        String requestedId = getIntent().getStringExtra(SshTunnelService.EXTRA_PROFILE_ID);
+        if (requestedId != null && "NEEDS_SERVER_CONFIG".equals(ProfileStore.status(this, requestedId))) {
+            requestId = requestedId;
+            requestState = "NEEDS_SERVER_CONFIG";
+            requestDetail = ProfileStore.statusDetail(this, requestedId);
         }
         overallStatus.setText("Подключено: " + connected + (pending > 0 ? " · В процессе: " + pending : ""));
         overallStatus.setTextColor(resolveColor(android.R.attr.colorAccent, 0xFF2457D6));

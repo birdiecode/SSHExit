@@ -55,6 +55,19 @@ public final class SshTunnelService extends VpnService {
 
     private static final String CHANNEL_ID = "ssh_tunnel";
     private static final int NOTIFICATION_ID = 41;
+    private static final String ACTION_REQUIRED_CHANNEL = "ssh_server_action";
+    private static final int ACTION_REQUIRED_ID = 42;
+    private static volatile boolean uiVisible;
+    private static java.lang.ref.WeakReference<SshTunnelService> runningService =
+            new java.lang.ref.WeakReference<>(null);
+    private final Map<String, String> notifiedServerRequests = new HashMap<>();
+
+    // Activity visibility changes never start a service or initiate a connection.
+    static void setUiVisible(boolean visible) {
+        uiVisible = visible;
+        SshTunnelService service = runningService.get();
+        if (service != null) service.main.post(service::refreshNotification);
+    }
 
     private final java.util.concurrent.ConcurrentHashMap<String, SshConnection> connections =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -76,6 +89,7 @@ public final class SshTunnelService extends VpnService {
         super.onCreate();
         ProfileStore.resetConnectionStatuses(this);
         createNotificationChannel();
+        runningService = new java.lang.ref.WeakReference<>(this);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -142,6 +156,7 @@ public final class SshTunnelService extends VpnService {
 
     private void refreshNotification() {
         if (destroyed) return;
+        refreshServerActionNotifications();
         int connected = 0, pending = 0;
         boolean vpnBlocking = false;
         for (SshConnection c : connections.values()) {
@@ -155,6 +170,53 @@ public final class SshTunnelService extends VpnService {
         } else updateNotification("SSH tunnel connected",
                 "Подключено: " + connected + " · В процессе: " + pending
                         + (vpnBlocking ? " · VPN блокирует трафик" : ""));
+    }
+
+    private void refreshServerActionNotifications() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) return;
+        Set<String> waiting = new HashSet<>();
+        for (SshConnection connection : connections.values()) {
+            String id = connection.profileId();
+            if (uiVisible || !connection.isLive() || !"NEEDS_SERVER_CONFIG".equals(connection.state)) continue;
+            Profile profile = ProfileStore.get(this, id);
+            if (profile == null || profile.serverSkipConfirmation) continue;
+            String request = ProfileStore.statusDetail(this, id);
+            if (request == null || request.isEmpty()) continue;
+            waiting.add(id);
+            if (request.equals(notifiedServerRequests.get(id))) continue;
+            if (!manager.areNotificationsEnabled()
+                    || (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
+                    android.Manifest.permission.POST_NOTIFICATIONS)
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED)) continue;
+            Intent open = new Intent(this, MainActivity.class)
+                    .setAction("host.birdiecode.sshexit.SERVER_CONFIG." + id)
+                    .putExtra(EXTRA_PROFILE_ID, id)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent content = PendingIntent.getActivity(this, 0, open,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            String name = profile.name == null || profile.name.trim().isEmpty() ? profile.host : profile.name;
+            String text = name + ": проверьте и подтвердите настройки сервера, чтобы продолжить подключение.";
+            Notification notification = new Notification.Builder(this, ACTION_REQUIRED_CHANNEL)
+                    .setSmallIcon(android.R.drawable.stat_sys_warning)
+                    .setContentTitle("Требуется настройка SSH-хоста")
+                    .setContentText(text)
+                    .setStyle(new Notification.BigTextStyle().bigText(text))
+                    .setCategory(Notification.CATEGORY_REMINDER)
+                    .setVisibility(Notification.VISIBILITY_PRIVATE)
+                    .setContentIntent(content)
+                    .setAutoCancel(true)
+                    .addAction(new Notification.Action.Builder(null, "Настроить", content).build())
+                    .build();
+            manager.notify(id, ACTION_REQUIRED_ID, notification);
+            notifiedServerRequests.put(id, request);
+        }
+        for (String id : new HashSet<>(notifiedServerRequests.keySet())) {
+            if (!waiting.contains(id)) {
+                manager.cancel(id, ACTION_REQUIRED_ID);
+                notifiedServerRequests.remove(id);
+            }
+        }
     }
 
     private void startInForeground(String title, String text) {
@@ -195,13 +257,24 @@ public final class SshTunnelService extends VpnService {
             NotificationChannel channel = new NotificationChannel(CHANNEL_ID, getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Shows the state of the SSH SOCKS5 tunnel");
             NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) manager.createNotificationChannel(channel);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+                NotificationChannel actionChannel = new NotificationChannel(ACTION_REQUIRED_CHANNEL,
+                        "Настройка SSH-хоста", NotificationManager.IMPORTANCE_DEFAULT);
+                actionChannel.setDescription("Подтверждение серверного плана, когда приложение свёрнуто");
+                manager.createNotificationChannel(actionChannel);
+            }
         }
     }
 
 
     @Override public void onDestroy() {
         destroyed = true;
+        if (runningService.get() == this) runningService.clear();
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) for (String id : notifiedServerRequests.keySet())
+            manager.cancel(id, ACTION_REQUIRED_ID);
+        notifiedServerRequests.clear();
         for (SshConnection c : connections.values()) c.shutdown();
         connections.clear();
         cleanup.shutdown();
