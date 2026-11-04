@@ -1559,6 +1559,10 @@ public final class MainActivity extends Activity {
                                 throw new KeyFileReader.TooLargeException();
                         }
                     }
+                    catch (KeyFileReader.TooLargeException oversized) { throw oversized; }
+                    catch (Exception metadataUnavailable) { /* Metadata is optional; enforce the stream limit below. */ }
+                    if (keyImportCancelled || Thread.currentThread().isInterrupted())
+                        throw new java.io.InterruptedIOException("Import cancelled");
                     try (InputStream input = getContentResolver().openInputStream(uri)) {
                         bytes = KeyFileReader.read(input, () -> keyImportCancelled);
                     }
