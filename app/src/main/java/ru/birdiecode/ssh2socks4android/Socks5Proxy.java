@@ -15,16 +15,41 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 final class Socks5Proxy {
+    static final int MAX_CLIENTS_PER_PROXY = 16;
+    static final int MAX_CLIENTS_GLOBAL = 32;
+    private static final Semaphore globalSlots = new Semaphore(MAX_CLIENTS_GLOBAL);
+    // Separate bounded pools prevent handlers waiting for relay threads in their own pool.
+    private static final ThreadPoolExecutor handlers = pool("socks5-client");
+    private static final ThreadPoolExecutor replies = pool("socks5-reply");
+    private final Semaphore clientSlots = new Semaphore(MAX_CLIENTS_PER_PROXY);
+    private final Set<ChannelDirectTCPIP> channels = ConcurrentHashMap.newKeySet();
+
+    private static ThreadPoolExecutor pool(String name) {
+        AtomicInteger sequence = new AtomicInteger();
+        return new ThreadPoolExecutor(0, MAX_CLIENTS_GLOBAL, 30, TimeUnit.SECONDS,
+                new SynchronousQueue<>(), action -> {
+                    Thread thread = new Thread(action, name + "-" + sequence.incrementAndGet());
+                    thread.setDaemon(true); return thread;
+                }, new ThreadPoolExecutor.AbortPolicy());
+    }
+    int activeClientCount() { return clients.size(); }
+    static int globalClientCount() { return MAX_CLIENTS_GLOBAL - globalSlots.availablePermits(); }
+    static int workerThreadCount() { return handlers.getPoolSize() + replies.getPoolSize(); }
+
     private final Session session;
     private final int port;
     private final String connectionId;
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private volatile ServerSocket server;
-    private volatile ExecutorService workers;
     private volatile Thread acceptThread;
 
     Socks5Proxy(Session session, int port) { this(session, port, "socks"); }
@@ -35,13 +60,14 @@ final class Socks5Proxy {
         this.connectionId = connectionId;
     }
 
-    void start() throws IOException {
+    synchronized void start() throws IOException {
+        if (server != null) throw new IllegalStateException("SOCKS5 already started");
         ServerSocket socket = new ServerSocket();
         socket.setReuseAddress(true);
-        socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
+        try { socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port)); }
+        catch (IOException error) { socket.close(); throw error; }
         server = socket;
-        workers = Executors.newCachedThreadPool();
-        Thread acceptor = new Thread(this::acceptLoop, "socks5-accept");
+        Thread acceptor = new Thread(() -> acceptLoop(socket), "socks5-accept");
         acceptThread = acceptor;
         acceptor.setDaemon(true);
         acceptor.start();
@@ -54,7 +80,7 @@ final class Socks5Proxy {
                 && acceptor != null && acceptor.isAlive();
     }
 
-    void stop() {
+    synchronized void stop() {
         ServerSocket listener = server;
         server = null;
         if (listener != null) {
@@ -67,32 +93,47 @@ final class Socks5Proxy {
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         for (Socket client : clients) closeQuietly(client);
-        ExecutorService pool = workers;
-        workers = null;
-        if (pool != null) pool.shutdownNow();
+        for (ChannelDirectTCPIP channel : channels) {
+            try { channel.disconnect(); } catch (Exception ignored) { }
+        }
     }
 
-    private void acceptLoop() {
-        while (server != null) {
+    private void acceptLoop(ServerSocket listener) {
+        while (!listener.isClosed()) {
+            Socket client = null;
             try {
-                ServerSocket listener = server;
-                if (listener == null) return;
-                Socket client = listener.accept();
-                client.setReuseAddress(true);
+                client = listener.accept();
                 client.setTcpNoDelay(true);
+                if (!clientSlots.tryAcquire()) { closeQuietly(client); continue; }
+                if (!globalSlots.tryAcquire()) {
+                    clientSlots.release(); closeQuietly(client); continue;
+                }
                 clients.add(client);
-                ExecutorService pool = workers;
-                if (pool != null) pool.execute(() -> handle(client));
-                else closeQuietly(client);
-            } catch (IOException e) {
-                if (server != null) continue;
-                return;
+                if (server != listener || listener.isClosed()) { releaseClient(client); return; }
+                Socket accepted = client;
+                try {
+                    handlers.execute(() -> handle(accepted, listener));
+                } catch (RejectedExecutionException rejected) {
+                    releaseClient(accepted);
+                }
+            } catch (IOException error) {
+                if (client != null) closeQuietly(client);
+                if (listener.isClosed()) return;
             }
         }
     }
 
-    private void handle(Socket client) {
+    private void releaseClient(Socket client) {
+        closeQuietly(client);
+        if (clients.remove(client)) {
+            clientSlots.release();
+            globalSlots.release();
+        }
+    }
+
+    private void handle(Socket client, ServerSocket owner) {
         ChannelDirectTCPIP channel = null;
+        Future<?> reply = null;
         boolean successReplySent = false;
         AppLog.INSTANCE.record(AppLog.TRACE, connectionId, "Принят локальный SOCKS5-клиент");
         try {
@@ -145,11 +186,13 @@ final class Socks5Proxy {
             int destinationPort = input.readUnsignedShort();
             client.setSoTimeout(0);
 
-            if (!session.isConnected()) {
+            if (server != owner || owner.isClosed() || !session.isConnected()) {
                 writeReply(output, 1);
                 return;
             }
             channel = (ChannelDirectTCPIP) session.openChannel("direct-tcpip");
+            channels.add(channel);
+            if (server != owner || owner.isClosed()) return;
             channel.setHost(destination);
             channel.setPort(destinationPort);
             channel.setOrgIPAddress(client.getInetAddress().getHostAddress());
@@ -165,14 +208,9 @@ final class Socks5Proxy {
             ChannelDirectTCPIP connectedChannel = channel;
             InputStream clientInput = client.getInputStream();
             OutputStream clientOutput = client.getOutputStream();
-            Thread toSsh = new Thread(() -> copy(client, connectedChannel, clientInput, sshOutput), "socks5-to-ssh");
-            Thread toClient = new Thread(() -> copy(client, connectedChannel, sshInput, clientOutput), "ssh-to-socks5");
-            toSsh.setDaemon(true);
-            toClient.setDaemon(true);
-            toSsh.start();
-            toClient.start();
-            toSsh.join();
-            toClient.join();
+            reply = replies.submit(() -> copy(client, connectedChannel, sshInput, clientOutput));
+            // The bounded handler also carries client -> SSH; no extra per-client thread.
+            copy(client, connectedChannel, clientInput, sshOutput);
         } catch (Exception e) {
             AppLog.INSTANCE.record(AppLog.WARN, connectionId, "SOCKS5: " + AppLog.errorCategory(e.getMessage()));
             if (!successReplySent) {
@@ -183,8 +221,9 @@ final class Socks5Proxy {
             if (channel != null) {
                 try { channel.disconnect(); } catch (Exception ignored) {}
             }
-            closeQuietly(client);
-            clients.remove(client);
+            if (channel != null) channels.remove(channel);
+            if (reply != null) reply.cancel(true);
+            releaseClient(client);
         }
     }
 

@@ -79,6 +79,16 @@ public final class MainActivity extends Activity {
     private TextView storageErrorView;
     private final java.util.Map<String, String> storageErrors = new java.util.LinkedHashMap<>();
 
+    private static final java.util.concurrent.ThreadPoolExecutor keyImportWorker =
+            new java.util.concurrent.ThreadPoolExecutor(0, 1, 30, java.util.concurrent.TimeUnit.SECONDS,
+                    new java.util.concurrent.SynchronousQueue<>(), action -> {
+                        Thread thread = new Thread(action, "ssh-key-import");
+                        thread.setDaemon(true); return thread;
+                    }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    private java.util.concurrent.Future<?> keyImportTask;
+    private volatile boolean keyImportCancelled;
+    private boolean activityResumed, keySaveDialogOpen;
+    private MaterialButton importKeyButton;
     private byte[] pendingVaultKey;
     private String pendingVaultKeyName = "";
     private String promptedFingerprint = "";
@@ -177,6 +187,7 @@ public final class MainActivity extends Activity {
         keysPage.addView(keyHint);
         MaterialButton importKey = makeButton("Импортировать приватный ключ", true);
         keysPage.addView(importKey, params(-1, -2));
+        importKeyButton = importKey;
         importKey.setOnClickListener(v -> launchKeyPicker());
         ScrollView keysScroll = new ScrollView(this);
         keysScroll.setClipToPadding(false);
@@ -308,6 +319,7 @@ public final class MainActivity extends Activity {
     }
 
     private void launchKeyPicker() {
+        if (keyImportTask != null && !keyImportTask.isDone()) return;
         Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         picker.addCategory(Intent.CATEGORY_OPENABLE);
         picker.setType("*/*");
@@ -332,11 +344,14 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        activityResumed = true;
+        if (pendingVaultKey != null && !keySaveDialogOpen) showSaveKeyDialog();
         handler.removeCallbacks(poll);
         handler.post(poll);
     }
 
     @Override protected void onPause() {
+        activityResumed = false;
         handler.removeCallbacks(poll);
         super.onPause();
     }
@@ -1410,7 +1425,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showSaveKeyDialog() {
-        if (pendingVaultKey == null) return;
+        if (pendingVaultKey == null || keySaveDialogOpen || !activityResumed) return;
         EditText name = input("Название ключа", pendingVaultKeyName, InputType.TYPE_CLASS_TEXT);
         EditText passphrase = input("Парольная фраза ключа (если зашифрован)", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         LinearLayout form = new LinearLayout(this);
@@ -1421,7 +1436,7 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Сохранить приватный ключ")
                 .setView(form)
-                .setNegativeButton("Отмена", (d, w) -> pendingVaultKey = null)
+                .setNegativeButton("Отмена", (d, w) -> clearPendingKey())
                 .setPositiveButton("Сохранить", null)
                 .create();
         dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -1434,7 +1449,7 @@ public final class MainActivity extends Activity {
                         KeyVault.encrypt(pendingVaultKey),
                         secret.isEmpty() ? "" : KeyVault.encrypt(secret.getBytes(StandardCharsets.UTF_8)));
                 SshKeyStore.save(this, key);
-                pendingVaultKey = null;
+                clearPendingKey();
                 dialog.dismiss();
                 Toast.makeText(this, "Ключ сохранён в общем хранилище", Toast.LENGTH_SHORT).show();
                 showKeyManager();
@@ -1442,6 +1457,8 @@ public final class MainActivity extends Activity {
                 Toast.makeText(this, e.getMessage() == null ? "Не удалось сохранить ключ" : e.getMessage(), Toast.LENGTH_LONG).show();
             }
         }));
+        keySaveDialogOpen = true;
+        dialog.setOnDismissListener(ignored -> { keySaveDialogOpen = false; clearPendingKey(); });
         dialog.show();
     }
 
@@ -1513,29 +1530,86 @@ public final class MainActivity extends Activity {
             return;
         }
         if (requestCode != REQUEST_KEY || resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        Uri uri = data.getData();
-        try (InputStream input = getContentResolver().openInputStream(uri);
-             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            if (input == null) throw new IllegalStateException("Не удалось прочитать выбранный файл");
-            byte[] buffer = new byte[8192];
-            int count;
-            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
-            pendingVaultKey = output.toByteArray();
-            String filename = null;
-            try (Cursor cursor = getContentResolver().query(uri,
-                    new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-                if (cursor != null && cursor.moveToFirst()) filename = cursor.getString(0);
-            }
-            if (filename == null || filename.trim().isEmpty()) filename = uri.getLastPathSegment();
-            if (filename != null) {
-                int slash = Math.max(filename.lastIndexOf('/'), filename.lastIndexOf(':'));
-                if (slash >= 0 && slash + 1 < filename.length()) filename = filename.substring(slash + 1);
-            }
-            pendingVaultKeyName = filename == null || filename.trim().isEmpty() ? "SSH-ключ" : filename.trim();
-            showSaveKeyDialog();
-        } catch (Exception e) {
-            Toast.makeText(this, "Не удалось прочитать ключ: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        importKeyInBackground(data.getData());
+    }
+
+    private void clearPendingKey() {
+        if (pendingVaultKey != null) java.util.Arrays.fill(pendingVaultKey, (byte) 0);
+        pendingVaultKey = null;
+    }
+
+    private void importKeyInBackground(Uri uri) {
+        clearPendingKey();
+        keyImportCancelled = false;
+        if (importKeyButton != null) importKeyButton.setEnabled(false);
+        Toast.makeText(this, "Чтение приватного ключа…", Toast.LENGTH_SHORT).show();
+        try {
+            keyImportTask = keyImportWorker.submit(() -> {
+                byte[] bytes = null;
+                try {
+                    String filename = null;
+                    // Query and stream reads both run off the UI thread.
+                    try (Cursor cursor = getContentResolver().query(uri,
+                            new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null, null)) {
+                        if (cursor != null && cursor.moveToFirst()) {
+                            int name = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                            if (name >= 0) filename = cursor.getString(name);
+                            int size = cursor.getColumnIndex(OpenableColumns.SIZE);
+                            if (size >= 0 && !cursor.isNull(size) && cursor.getLong(size) > KeyFileReader.MAX_BYTES)
+                                throw new KeyFileReader.TooLargeException();
+                        }
+                    }
+                    catch (KeyFileReader.TooLargeException oversized) { throw oversized; }
+                    catch (Exception metadataUnavailable) { /* Metadata is optional; enforce the stream limit below. */ }
+                    if (keyImportCancelled || Thread.currentThread().isInterrupted())
+                        throw new java.io.InterruptedIOException("Import cancelled");
+                    try (InputStream input = getContentResolver().openInputStream(uri)) {
+                        bytes = KeyFileReader.read(input, () -> keyImportCancelled);
+                    }
+                    if (filename == null || filename.trim().isEmpty()) filename = uri.getLastPathSegment();
+                    if (filename != null) {
+                        int slash = Math.max(filename.lastIndexOf('/'), filename.lastIndexOf(':'));
+                        if (slash >= 0 && slash + 1 < filename.length()) filename = filename.substring(slash + 1);
+                        // Provider-controlled display names cannot grow the UI without bound.
+                        if (filename.length() > 128) filename = filename.substring(0, 128);
+                    }
+                    final String name = filename == null || filename.trim().isEmpty() ? "SSH-ключ" : filename.trim();
+                    final byte[] imported = bytes;
+                    bytes = null;
+                    runOnUiThread(() -> {
+                        if (keyImportCancelled || isDestroyed() || isFinishing()) {
+                            java.util.Arrays.fill(imported, (byte) 0); return;
+                        }
+                        if (importKeyButton != null) importKeyButton.setEnabled(true);
+                        clearPendingKey();
+                        pendingVaultKey = imported;
+                        pendingVaultKeyName = name;
+                        if (activityResumed) showSaveKeyDialog();
+                    });
+                } catch (Exception error) {
+                    final String message = error instanceof KeyFileReader.TooLargeException
+                            ? "Ключ слишком большой. Максимальный размер — 256 КиБ."
+                            : "Не удалось прочитать ключ. Проверьте файл и повторите импорт.";
+                    runOnUiThread(() -> {
+                        if (isDestroyed() || isFinishing() || keyImportCancelled) return;
+                        if (importKeyButton != null) importKeyButton.setEnabled(true);
+                        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                    });
+                } finally {
+                    if (bytes != null) java.util.Arrays.fill(bytes, (byte) 0);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            if (importKeyButton != null) importKeyButton.setEnabled(true);
+            Toast.makeText(this, "Импорт уже выполняется. Дождитесь его завершения.", Toast.LENGTH_LONG).show();
         }
+    }
+
+    @Override protected void onDestroy() {
+        keyImportCancelled = true;
+        if (keyImportTask != null) keyImportTask.cancel(true);
+        clearPendingKey();
+        super.onDestroy();
     }
 
     private MaterialCardView surfaceCard() {
