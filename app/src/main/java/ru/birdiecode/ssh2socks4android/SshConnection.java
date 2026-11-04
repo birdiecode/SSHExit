@@ -90,6 +90,7 @@ final class SshConnection {
         if ("NEEDS_SERVER_CONFIG".equals(state)) AppLog.INSTANCE.record(AppLog.INFO, connectionId, "Пользователь отменил серверный план; настройки не применялись");
         cancelled = true;
         setStatus(activeProfileId, "IDLE", "Disconnected");
+        if (retry != null) { retry.cancel(false); retry = null; }
         worker.shutdownNow();
         pendingPasswords.clear();
         host.cleanup(this::closeAllResources);
