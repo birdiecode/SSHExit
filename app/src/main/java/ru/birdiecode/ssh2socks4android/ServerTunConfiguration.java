@@ -28,14 +28,20 @@ final class ServerTunConfiguration {
                 .append("OWN_TABLE=0\nADDR4=0\nADDR6=0\nROUTE4=0\nROUTE6=0\ncleanup(){\n  CLEANUP_OK=1\n")
                 .append("  if [ \"$OWN_TABLE\" = 1 ]; then nft delete table inet \"$TABLE\" >/dev/null 2>&1 || CLEANUP_OK=0; fi\n");
         if (profile.vpnIpv4) {
-            script.append("  if [ \"$ADDR4\" = 1 ]; then ip address del ").append(server4).append("/32 peer ").append(client4)
-                    .append("/32 dev \"$IF\" >/dev/null 2>&1 || CLEANUP_OK=0; fi\n")
-                    .append("  if [ \"$ROUTE4\" = 1 ]; then ip -4 route del ").append(client4).append("/32 dev \"$IF\" proto static >/dev/null 2>&1 || CLEANUP_OK=0; fi\n");
+            script.append("  if [ \"$ROUTE4\" = 1 ]; then ip -4 route del ").append(client4)
+                    .append("/32 dev \"$IF\" proto static >/dev/null 2>&1 || { [ -z \"$(ip -4 route show exact ")
+                    .append(client4).append("/32 dev \"$IF\" proto static 2>/dev/null)\" ] || { echo SSHEXIT_CLEANUP_STEP_FAILED:route4; CLEANUP_OK=0; }; }; fi\n")
+                    .append("  if [ \"$ADDR4\" = 1 ]; then ip address del ").append(server4).append("/32 peer ").append(client4)
+                    .append("/32 dev \"$IF\" >/dev/null 2>&1 || { [ -z \"$(ip -4 -o addr show dev \"$IF\" to ")
+                    .append(server4).append("/32 2>/dev/null)\" ] || { echo SSHEXIT_CLEANUP_STEP_FAILED:address4; CLEANUP_OK=0; }; }; fi\n");
         }
         if (profile.vpnIpv6) {
-            script.append("  if [ \"$ADDR6\" = 1 ]; then ip -6 address del ").append(ipv6[0]).append("/128 peer ").append(ipv6[1])
-                    .append("/128 dev \"$IF\" >/dev/null 2>&1 || CLEANUP_OK=0; fi\n")
-                    .append("  if [ \"$ROUTE6\" = 1 ]; then ip -6 route del ").append(ipv6[1]).append("/128 dev \"$IF\" proto static >/dev/null 2>&1 || CLEANUP_OK=0; fi\n");
+            script.append("  if [ \"$ROUTE6\" = 1 ]; then ip -6 route del ").append(ipv6[1])
+                    .append("/128 dev \"$IF\" proto static >/dev/null 2>&1 || { [ -z \"$(ip -6 route show exact ")
+                    .append(ipv6[1]).append("/128 dev \"$IF\" proto static 2>/dev/null)\" ] || { echo SSHEXIT_CLEANUP_STEP_FAILED:route6; CLEANUP_OK=0; }; }; fi\n")
+                    .append("  if [ \"$ADDR6\" = 1 ]; then ip -6 address del ").append(ipv6[0]).append("/128 peer ").append(ipv6[1])
+                    .append("/128 dev \"$IF\" >/dev/null 2>&1 || { [ -z \"$(ip -6 -o addr show dev \"$IF\" to ")
+                    .append(ipv6[0]).append("/128 2>/dev/null)\" ] || { echo SSHEXIT_CLEANUP_STEP_FAILED:address6; CLEANUP_OK=0; }; }; fi\n");
         }
         script.append("  if [ \"$CLEANUP_OK\" = 1 ]; then echo SSHEXIT_CLEANUP_DONE; else echo SSHEXIT_CLEANUP_FAILED; fi\n}\ntrap cleanup EXIT\ntrap 'exit 0' HUP TERM\n");
         script.append("ip link set dev \"$IF\" mtu \"$MTU\" up\necho SSHEXIT_APPLIED:link\n");
