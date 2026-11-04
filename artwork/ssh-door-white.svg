@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">SSH — открытая дверь</title>
+  <desc id="desc">Синяя приоткрытая дверь с белой надписью SSH. Белый фон, векторная надпись без зависимости от шрифтов.</desc>
+  <rect width="512" height="512" fill="white"/>
+  <!-- Door opening and frame -->
+  <path d="M148 112H364V416H148Z" fill="#2563EB" fill-opacity=".08"/>
+  <path d="M148 112H364V416H148" stroke="#2563EB" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Open door leaf -->
+  <path d="M148 116L300 64V448L148 412V116Z" fill="#2563EB" stroke="#2563EB" stroke-width="16" stroke-linejoin="round"/>
+  <path d="M166 130L282 90" stroke="#60A5FA" stroke-width="6" stroke-linecap="round"/>
+  <!-- SSH lettering outlined as paths -->
+  <g aria-label="SSH" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M199 218H182C177 218 175 221 175 226C175 231 178 234 183 234H191C196 234 199 237 199 242C199 247 196 250 191 250H175"/>
+    <path d="M236 218H219C214 218 212 221 212 226C212 231 215 234 220 234H228C233 234 236 237 236 242C236 247 233 250 228 250H212"/>
+    <path d="M250 218V250M274 218V250M250 234H274"/>
+  </g>
+  <!-- Handle -->
+  <circle cx="274" cy="302" r="8" fill="white"/>
+  <path d="M259 302H274" stroke="white" stroke-width="7" stroke-linecap="round"/>
+  <!-- Threshold -->
+  <path d="M108 448H404" stroke="#2563EB" stroke-width="12" stroke-linecap="round"/>
+</svg>
