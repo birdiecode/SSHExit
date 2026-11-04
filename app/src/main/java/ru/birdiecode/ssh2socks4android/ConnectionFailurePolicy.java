@@ -66,8 +66,8 @@ final class ConnectionFailurePolicy {
         String message = error.getMessage() == null ? "" : error.getMessage().toLowerCase(Locale.ROOT);
         if (message.contains("channel is not opened")) {
             // JSch records SSH_MSG_CHANNEL_OPEN_FAILURE's reason in getExitStatus().
-            // -1 means no reply before timeout; 4 is SSH_OPEN_RESOURCE_SHORTAGE.
-            kind = !sessionConnected || reason < 0 || reason == 4
+            // -1 means no reply; 2 is CONNECT_FAILED; 4 is RESOURCE_SHORTAGE.
+            kind = reason < 0 || reason == 2 || reason == 4
                     ? Kind.TEMPORARY_NETWORK : Kind.CONFIGURATION;
         }
         return new Failure(kind, error.getMessage(), error);
