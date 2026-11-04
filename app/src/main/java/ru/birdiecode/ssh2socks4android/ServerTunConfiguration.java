@@ -39,6 +39,8 @@ final class ServerTunConfiguration {
         }
         script.append("  if [ \"$CLEANUP_OK\" = 1 ]; then echo SSHEXIT_CLEANUP_DONE; else echo SSHEXIT_CLEANUP_FAILED; fi\n}\ntrap cleanup EXIT\ntrap 'exit 0' HUP TERM\n");
         if (profile.vpnIpv4) {
+            script.append("[ -z \"$(ip -4 -o addr show to ").append(server4).append("/32)\" ] || { echo SSHEXIT_ADDRESS_CONFLICT; exit 31; }\n")
+                    .append("if ip -4 route show match ").append(client4).append("/32 | grep -qv '^default '; then echo SSHEXIT_ADDRESS_CONFLICT; exit 29; fi\n");
             if (wan.isEmpty()) {
                 script.append("WAN=$(ip -o route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}')\n")
                         .append("[ -n \"$WAN\" ] || { echo 'no IPv4 egress interface'; exit 23; }\n");
@@ -52,6 +54,7 @@ final class ServerTunConfiguration {
                     .append("/32 dev \"$IF\" noprefixroute\nADDR4=1\necho SSHEXIT_APPLIED:address4\n");
         }
         if (profile.vpnIpv6) {
+            script.append("[ -z \"$(ip -6 -o addr show to ").append(ipv6[0]).append("/128)\" ] || { echo SSHEXIT_ADDRESS_CONFLICT; exit 32; }\n");
             script.append(profile.serverManageIpv6Forwarding ? "CURRENT6=$(cat /proc/sys/net/ipv6/conf/all/forwarding)\n" : "[ \"$(cat /proc/sys/net/ipv6/conf/all/forwarding)\" = 1 ] || { echo 'IPv6 forwarding is disabled; automatic change was not approved'; exit 26; }\n")
                     .append(profile.serverManageIpv6Forwarding ? "if [ \"$CURRENT6\" != 1 ]; then printf '1\\n' > /proc/sys/net/ipv6/conf/all/forwarding; fi\necho SSHEXIT_APPLIED:forward6\n" : "")
                     .append("ip -6 route add ").append(ipv6[1]).append("/128 dev \"$IF\" proto static || { echo SSHEXIT_ADDRESS_CONFLICT; exit 30; }\nROUTE6=1\n")
