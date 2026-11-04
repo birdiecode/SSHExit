@@ -75,6 +75,18 @@ public class ServerTunConfigurationTest {
         }
     }
 
+    @Test public void reconnectCanUseFreshTunWithTheSameClientAddressSlot() {
+        Profile p = new Profile(); p.vpnExternalInterface = "ens3";
+        String[] ipv6 = {"fd00::1","fd00::2"};
+        String first = ServerTunConfiguration.build(p, "tun1000001", "ssh2socks_012345abcdef", 1400, ipv6, 1000001);
+        String next = ServerTunConfiguration.build(p, "tun1000002", "ssh2socks_112345abcdef", 1400, ipv6, 1000001);
+        String client = TunAddressPlan.ipv4(1000001)[1];
+        assertTrue(first.contains("ip saddr " + client + " masquerade"));
+        assertTrue(next.contains("ip saddr " + client + " masquerade"));
+        assertFalse(next.contains("ip saddr " + TunAddressPlan.ipv4(1000002)[1] + " masquerade"));
+        assertEquals(next, ServerTunConfiguration.preview(p, "tun1000002", "ssh2socks_112345abcdef", ipv6, 1000001));
+    }
+
     @Test public void rejectsShellMetacharactersInInterface() {
         Profile p = new Profile();
         p.vpnExternalInterface = "eth0;id";
