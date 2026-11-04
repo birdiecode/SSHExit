@@ -38,6 +38,7 @@ final class ServerTunConfiguration {
                     .append("  if [ \"$ROUTE6\" = 1 ]; then ip -6 route del ").append(ipv6[1]).append("/128 dev \"$IF\" proto static >/dev/null 2>&1 || CLEANUP_OK=0; fi\n");
         }
         script.append("  if [ \"$CLEANUP_OK\" = 1 ]; then echo SSHEXIT_CLEANUP_DONE; else echo SSHEXIT_CLEANUP_FAILED; fi\n}\ntrap cleanup EXIT\ntrap 'exit 0' HUP TERM\n");
+        script.append("ip link set dev \"$IF\" mtu \"$MTU\" up\necho SSHEXIT_APPLIED:link\n");
         if (profile.vpnIpv4) {
             script.append("[ -z \"$(ip -4 -o addr show to ").append(server4).append("/32)\" ] || { echo SSHEXIT_ADDRESS_CONFLICT; exit 31; }\n")
                     .append("if ip -4 route show match ").append(client4).append("/32 | grep -qv '^default '; then echo SSHEXIT_ADDRESS_CONFLICT; exit 29; fi\n");
@@ -61,7 +62,6 @@ final class ServerTunConfiguration {
                     .append("ip -6 address add ").append(ipv6[0]).append("/128 peer ").append(ipv6[1])
                     .append("/128 dev \"$IF\" noprefixroute\nADDR6=1\necho SSHEXIT_APPLIED:address6\n");
         }
-        script.append("ip link set dev \"$IF\" mtu \"$MTU\" up\necho SSHEXIT_APPLIED:link\n");
         script.append("nft -f - <<EOF\nadd table inet $TABLE\n");
         if (profile.vpnIpv4) {
             script.append("add chain inet $TABLE forward { type filter hook forward priority filter; policy accept; }\n");
