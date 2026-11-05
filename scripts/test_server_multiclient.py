@@ -112,7 +112,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         classes = Path(tmp)/'classes'; classes.mkdir()
         run('javac', '-d', str(classes), *(str(source/n) for n in [
-            'Profile.java','VpnRouteTable.java','TunAddressPlan.java','ServerTunConfiguration.java']),
+            'Profile.java','VpnMtu.java','VpnRouteTable.java','TunAddressPlan.java','ServerTunConfiguration.java']),
             str(ROOT/'scripts/ServerPlanFixture.java'))
         try:
             run('ip','link','set','lo','up')
