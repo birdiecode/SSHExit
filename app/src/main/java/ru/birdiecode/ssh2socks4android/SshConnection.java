@@ -227,7 +227,6 @@ final class SshConnection {
     private volatile int previousIpv6Forwarding = -1;
     private volatile Thread vpnPacketThread;
     private static final int VPN_NOTIFICATION_ID = 42;
-    private static final int DEFAULT_VPN_MTU = 1400;
     private long lastServerHeartbeatNanos;
 
 
@@ -533,8 +532,11 @@ final class SshConnection {
 
     private void establishVpnInterface(Profile profile) throws Exception {
         checkCancelled();
+        int mtu = VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
         VpnPacketBridge retained = vpnBridge;
         if (retained != null) {
+            if (retained.mtu() != mtu)
+                throw new IllegalArgumentException("MTU изменён: отключите VPN и подключитесь заново");
             if (!retained.failure().isEmpty()) throw new IllegalStateException("Системный TUN недоступен");
             AppLog.INSTANCE.record(AppLog.DEBUG, connectionId, "Сохранён системный TUN; трафик блокируется до восстановления SSH");
             return;
@@ -543,7 +545,7 @@ final class SshConnection {
         if (VpnService.prepare(context) != null) throw new IllegalStateException("Нужно разрешение Android на VPN");
         VpnService.Builder builder = service.new Builder()
                 .setSession(profile.name == null || profile.name.isEmpty() ? profile.host : profile.name)
-                .setMtu(profile.vpnMtu)
+                .setMtu(mtu)
                 .setBlocking(false)
                 .addDisallowedApplication(service.getPackageName());
 
@@ -580,7 +582,7 @@ final class SshConnection {
         }
         ParcelFileDescriptor established = builder.establish();
         if (established == null) throw new IllegalStateException("Android не создал VPN-интерфейс");
-        VpnPacketBridge created = new VpnPacketBridge(new AndroidTunDevice(established), profile.vpnMtu, activeTunUnit);
+        VpnPacketBridge created = new VpnPacketBridge(new AndroidTunDevice(established), mtu, activeTunUnit, profile.vpnIpv6);
         try {
             synchronized (vpnLock) {
                 checkCancelled();
@@ -615,7 +617,7 @@ final class SshConnection {
         OpenSshTunChannel tun = new OpenSshTunChannel(activeTunUnit);
         tun.setEventListener(event -> AppLog.INSTANCE.record(event.contains("FAILED") ? AppLog.ERROR : AppLog.TRACE,
                 connectionId, event));
-        int mtu = profile.vpnMtu > 0 ? profile.vpnMtu : DEFAULT_VPN_MTU;
+        int mtu = VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
         tun.setInputStream(packets.outgoing(), true);
         tun.setOutputStream(packets.incoming(), true);
         activeTun = tun;
@@ -644,9 +646,11 @@ final class SshConnection {
     private void configurePreparedVpnTunnel(Profile profile, Session endpoint) throws Exception {
         checkCancelled();
         requirePreparedVpnTunnel();
+        if (vpnBridge.mtu() != VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6))
+            throw new IllegalArgumentException("MTU изменён: отключите VPN и подключитесь заново");
         VpnPacketBridge.Endpoint packets = activeVpnPackets;
         setStatus(activeProfileId, "CONFIGURING_SERVER", "Настройка сервера");
-        int mtu = profile.vpnMtu > 0 ? profile.vpnMtu : DEFAULT_VPN_MTU;
+        int mtu = VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
         try { startServerTunConfig(endpoint, profile, mtu, activeTunUnit); }
         catch (ConnectionFailurePolicy.Failure error) { throw error; }
         catch (IOException error) {
