@@ -15,8 +15,12 @@ public final class TunPacketStreams {
     private TunPacketStreams() {}
 
     public static InputStream addOpenSshFraming(InputStream tunInput, int mtu) {
+        return addOpenSshFraming(tunInput, mtu, false);
+    }
+
+    public static InputStream addOpenSshFraming(InputStream tunInput, int mtu, boolean ipv6) {
         if (tunInput == null) throw new IllegalArgumentException("TUN input is required");
-        validateMtu(mtu);
+        VpnMtu.validate(mtu, ipv6);
         return new FramedPacketInputStream(tunInput, mtu);
     }
 
@@ -26,9 +30,14 @@ public final class TunPacketStreams {
      */
     public static void copyOpenSshFramesToTun(InputStream channelInput, OutputStream tunOutput, int mtu)
             throws IOException {
+        copyOpenSshFramesToTun(channelInput, tunOutput, mtu, false);
+    }
+
+    public static void copyOpenSshFramesToTun(InputStream channelInput, OutputStream tunOutput,
+            int mtu, boolean ipv6) throws IOException {
         if (channelInput == null || tunOutput == null) throw new IllegalArgumentException("Streams are required");
-        validateMtu(mtu);
-        OutputStream decoder = removeOpenSshFraming(tunOutput, mtu);
+        VpnMtu.validate(mtu, ipv6);
+        OutputStream decoder = removeOpenSshFraming(tunOutput, mtu, ipv6);
         byte[] buffer = new byte[mtu + 8];
         int count;
         while ((count = channelInput.read(buffer)) >= 0) {
@@ -42,8 +51,12 @@ public final class TunPacketStreams {
      * complete framed packet as one write to the Android TUN descriptor.
      */
     public static OutputStream removeOpenSshFraming(OutputStream tunOutput, int mtu) {
+        return removeOpenSshFraming(tunOutput, mtu, false);
+    }
+
+    public static OutputStream removeOpenSshFraming(OutputStream tunOutput, int mtu, boolean ipv6) {
         if (tunOutput == null) throw new IllegalArgumentException("TUN output is required");
-        validateMtu(mtu);
+        VpnMtu.validate(mtu, ipv6);
         return new FramedPacketOutputStream(tunOutput, mtu);
     }
 
@@ -125,10 +138,6 @@ public final class TunPacketStreams {
             closed = true;
             try { finish(); } finally { tunOutput.close(); }
         }
-    }
-
-    private static void validateMtu(int mtu) {
-        if (mtu < 576 || mtu > 65535) throw new IllegalArgumentException("MTU must be between 576 and 65535");
     }
 
     private static final class FramedPacketInputStream extends InputStream {
