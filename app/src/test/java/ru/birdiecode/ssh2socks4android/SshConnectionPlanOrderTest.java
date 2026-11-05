@@ -35,6 +35,7 @@ public class SshConnectionPlanOrderTest {
         when(ssh.openChannel("exec")).thenReturn(monitor);
         VpnPacketBridge bridge = mock(VpnPacketBridge.class);
         VpnPacketBridge.Endpoint packets = mock(VpnPacketBridge.Endpoint.class);
+        when(bridge.mtu()).thenReturn(VpnMtu.DEFAULT);
         when(bridge.failure()).thenReturn(""); when(bridge.addressSlot()).thenReturn(1000001);
         when(bridge.prepareEndpoint()).thenReturn(packets);
         when(packets.outgoing()).thenReturn(new ByteArrayInputStream(new byte[0]));
