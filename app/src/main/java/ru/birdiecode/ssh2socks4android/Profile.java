@@ -16,7 +16,7 @@ final class Profile {
     boolean vpnIpv4 = true;
     boolean vpnIpv6 = false;
     String vpnIpv6Prefix = "";
-    int vpnMtu = 1400;
+    int vpnMtu = VpnMtu.DEFAULT;
     String vpnDnsServers = "1.1.1.1";
     boolean vpnFullTunnel = true;
     String vpnRoutes = "";
