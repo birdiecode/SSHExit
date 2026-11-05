@@ -36,7 +36,7 @@ final class ProfileStore {
                 p.vpnIpv4 = json.optBoolean("vpnIpv4", true);
                 p.vpnIpv6 = json.optBoolean("vpnIpv6", false);
                 p.vpnIpv6Prefix = json.optString("vpnIpv6Prefix", "");
-                p.vpnMtu = json.optInt("vpnMtu", 1400);
+                p.vpnMtu = json.optInt("vpnMtu", VpnMtu.DEFAULT);
                 p.vpnDnsServers = json.optString("vpnDnsServers", "1.1.1.1");
                 p.vpnFullTunnel = json.optBoolean("vpnFullTunnel", true);
                 p.vpnRoutes = json.optString("vpnRoutes", "");

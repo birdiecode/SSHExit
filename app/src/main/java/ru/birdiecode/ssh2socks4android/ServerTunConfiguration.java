@@ -15,7 +15,7 @@ final class ServerTunConfiguration {
             throw new IllegalArgumentException("Invalid server resource identifier");
         if (!wan.isEmpty() && !wan.matches("[a-zA-Z0-9_.:-]{1,15}"))
             throw new IllegalArgumentException("Invalid egress interface");
-        if (mtu < 1280 || mtu > 32768) throw new IllegalArgumentException("Invalid VPN MTU");
+        VpnMtu.validate(mtu, profile.vpnIpv6);
         for (String address : ipv6)
             if (!address.matches("[a-fA-F0-9:]+")) throw new IllegalArgumentException("Invalid IPv6 address");
         StringBuilder script = new StringBuilder();
