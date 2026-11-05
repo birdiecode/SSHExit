@@ -18,6 +18,7 @@ final class VpnPacketBridge implements AutoCloseable {
     private static final int QUEUE_CAPACITY = 64;
     private final PacketIo io;
     private final int mtu, addressSlot;
+    private final boolean ipv6;
     private final Thread reader;
     private volatile boolean closed;
     private volatile String failure = "";
@@ -25,12 +26,18 @@ final class VpnPacketBridge implements AutoCloseable {
     private long droppedPackets;
 
     VpnPacketBridge(PacketIo io, int mtu, int addressSlot) {
-        if (io == null || mtu < 576 || mtu > 65535) throw new IllegalArgumentException("Invalid TUN bridge");
+        this(io, mtu, addressSlot, false);
+    }
+    VpnPacketBridge(PacketIo io, int mtu, int addressSlot, boolean ipv6) {
+        if (io == null) throw new IllegalArgumentException("Invalid TUN bridge");
+        VpnMtu.validate(mtu, ipv6);
+        this.ipv6 = ipv6;
         this.io = io; this.mtu = mtu; this.addressSlot = addressSlot;
         reader = new Thread(this::readLoop, "android-vpn-packets");
         reader.setDaemon(true); reader.start();
     }
     int addressSlot() { return addressSlot; }
+    int mtu() { return mtu; }
     String failure() { return failure; }
     boolean isClosed() { return closed; }
     synchronized long droppedPackets() { return droppedPackets; }
@@ -91,7 +98,7 @@ final class VpnPacketBridge implements AutoCloseable {
             }
             // SSH channel teardown must never close the shared system TUN.
             @Override public void close() {}
-        }, mtu);
+        }, mtu, ipv6);
 
         InputStream outgoing() { return frames; }
         OutputStream incoming() { return incoming; }
