@@ -1093,7 +1093,8 @@ public final class MainActivity extends Activity {
         CheckBox vpnFailover = checkBox("Разрешить резервное переключение", profile.vpnFailover);
         CheckBox vpnReconnect = checkBox("Автоматически переподключаться", profile.vpnAutoReconnect);
         CheckBox serverConfirmation = checkBox("Показывать настройки сервера перед подключением", !profile.serverSkipConfirmation);
-        EditText vpnMtu = input("MTU (576–9000)", String.valueOf(profile.vpnMtu), InputType.TYPE_CLASS_NUMBER);
+        EditText vpnMtu = input(VpnMtu.hint(vpnIpv6.isChecked()), String.valueOf(profile.vpnMtu), InputType.TYPE_CLASS_NUMBER);
+        vpnIpv6.setOnCheckedChangeListener((button, checked) -> vpnMtu.setHint(VpnMtu.hint(checked)));
         EditText vpnDns = input("DNS-серверы через запятую", profile.vpnDnsServers, InputType.TYPE_CLASS_TEXT);
         EditText vpnRoutes = new EditText(this);
         vpnRoutes.setHint("Маршруты CIDR, по одному на строку (для split tunneling)");
@@ -1154,10 +1155,8 @@ public final class MainActivity extends Activity {
                 if (socksEnabled && socksPortValue < 1024)
                     throw new IllegalArgumentException("Локальный порт должен быть от 1024 до 65535");
 
-                int vpnMtuValue = parsePort(vpnMtu.getText().toString(), "MTU");
-                if (vpnMtuValue < 576 || vpnMtuValue > 9000) {
-                    throw new IllegalArgumentException("MTU должен быть в диапазоне 576–9000");
-                }
+                int vpnMtuValue = mode.getSelectedItemPosition() == 0 ? profile.vpnMtu
+                        : VpnMtu.parse(vpnMtu.getText().toString(), vpnIpv6.isChecked());
                 if (!vpnIpv4.isChecked() && !vpnIpv6.isChecked()) {
                     throw new IllegalArgumentException("Включите IPv4, IPv6 или оба протокола");
                 }
