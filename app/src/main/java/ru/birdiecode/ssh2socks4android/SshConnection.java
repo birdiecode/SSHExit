@@ -617,7 +617,7 @@ final class SshConnection {
         OpenSshTunChannel tun = new OpenSshTunChannel(activeTunUnit);
         tun.setEventListener(event -> AppLog.INSTANCE.record(event.contains("FAILED") ? AppLog.ERROR : AppLog.TRACE,
                 connectionId, event));
-        int mtu = VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
+        VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
         tun.setInputStream(packets.outgoing(), true);
         tun.setOutputStream(packets.incoming(), true);
         activeTun = tun;
@@ -646,11 +646,11 @@ final class SshConnection {
     private void configurePreparedVpnTunnel(Profile profile, Session endpoint) throws Exception {
         checkCancelled();
         requirePreparedVpnTunnel();
-        if (vpnBridge.mtu() != VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6))
+        int mtu = VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
+        if (vpnBridge.mtu() != mtu)
             throw new IllegalArgumentException("MTU изменён: отключите VPN и подключитесь заново");
         VpnPacketBridge.Endpoint packets = activeVpnPackets;
         setStatus(activeProfileId, "CONFIGURING_SERVER", "Настройка сервера");
-        int mtu = VpnMtu.validate(profile.vpnMtu, profile.vpnIpv6);
         try { startServerTunConfig(endpoint, profile, mtu, activeTunUnit); }
         catch (ConnectionFailurePolicy.Failure error) { throw error; }
         catch (IOException error) {
